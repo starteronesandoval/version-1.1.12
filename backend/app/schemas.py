@@ -40,6 +40,13 @@ class ClientProfileResponse(ClientProfileUpsert):
     id: int
     user_id: int
     avatar_url: str | None = None
+    avatar_preset: str = "music"
+    avatar_color: str = "#8B5CF6"
+
+
+class AvatarChoiceUpdate(BaseModel):
+    preset: str = Field(min_length=2, max_length=40)
+    color: str = Field(pattern=r"^#[0-9A-Fa-f]{6}$")
 
 
 class MusicianProfileUpsert(BaseModel):
@@ -69,3 +76,5 @@ class MusicianProfileResponse(MusicianProfileUpsert):
     id: int
     user_id: int
     media: list[MediaResponse] = Field(default_factory=list)
+    avatar_preset: str = "music"
+    avatar_color: str = "#8B5CF6"

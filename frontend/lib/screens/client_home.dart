@@ -145,6 +145,8 @@ class _ClientHomeState extends State<ClientHome> {
         radius: 17,
         url: widget.api.mediaUrl(clientProfile?['avatar_url']),
         fallback: clientProfile?['name'] ?? 'C',
+        preset: clientProfile?['avatar_preset'] ?? 'music',
+        color: clientProfile?['avatar_color'] ?? '#8B5CF6',
       );
 
   Widget _bandCard(Map<String, dynamic> band) {
@@ -160,6 +162,8 @@ class _ClientHomeState extends State<ClientHome> {
           ProfileAvatar(
               url: widget.api.mediaUrl(avatar?['url']),
               fallback: band['group_name'],
+              preset: band['avatar_preset'] ?? 'music',
+              color: band['avatar_color'] ?? '#8B5CF6',
               radius: 38),
           const SizedBox(width: 14),
           Expanded(
@@ -221,6 +225,8 @@ class _ClientHomeState extends State<ClientHome> {
                   child: ProfileAvatar(
                       url: widget.api.mediaUrl(avatar?['url']),
                       fallback: band['group_name'],
+                      preset: band['avatar_preset'] ?? 'music',
+                      color: band['avatar_color'] ?? '#8B5CF6',
                       radius: 56)),
               const SizedBox(height: 14),
               Text(band['group_name'],
@@ -286,6 +292,17 @@ class _ClientHomeState extends State<ClientHome> {
                 fontSize: 12, color: Colors.white.withValues(alpha: .55)))
       ]);
 
+  Future<void> _pickPreset() async {
+    final selection = await showAvatarPicker(
+      context,
+      currentPreset: clientProfile?['avatar_preset'] ?? 'music',
+      currentColor: clientProfile?['avatar_color'] ?? '#8B5CF6',
+    );
+    if (selection == null) return;
+    await widget.api.setAvatarPreset(selection.preset, selection.color);
+    await loadClientProfile();
+  }
+
   Future<void> _pickClientAvatar() async {
     final image =
         await picker.pickImage(source: ImageSource.gallery, imageQuality: 88);
@@ -316,7 +333,20 @@ class _ClientHomeState extends State<ClientHome> {
             ProfileAvatar(
                 url: widget.api.mediaUrl(clientProfile?['avatar_url']),
                 fallback: clientProfile?['name'] ?? 'C',
+                preset: clientProfile?['avatar_preset'] ?? 'music',
+                color: clientProfile?['avatar_color'] ?? '#8B5CF6',
                 radius: 50),
+            if (clientProfile != null)
+              Positioned(
+                  left: 0,
+                  bottom: 0,
+                  child: CircleAvatar(
+                      radius: 16,
+                      child: IconButton(
+                          padding: EdgeInsets.zero,
+                          iconSize: 16,
+                          onPressed: _pickPreset,
+                          icon: const Icon(Icons.palette_outlined)))),
             if (clientProfile != null)
               Positioned(
                   right: 0,

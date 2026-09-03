@@ -28,6 +28,18 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     musician_profile: Mapped["MusicianProfile | None"] = relationship(back_populates="user", cascade="all, delete-orphan")
     client_profile: Mapped["ClientProfile | None"] = relationship(back_populates="user", cascade="all, delete-orphan")
+    avatar_choice: Mapped["AvatarChoice | None"] = relationship(
+        back_populates="user", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class AvatarChoice(Base):
+    __tablename__ = "avatar_choices"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
+    preset: Mapped[str] = mapped_column(String(40), default="music")
+    color: Mapped[str] = mapped_column(String(9), default="#8B5CF6")
+    user: Mapped[User] = relationship(back_populates="avatar_choice")
 
 
 class MusicianProfile(Base):

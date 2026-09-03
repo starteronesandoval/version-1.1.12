@@ -32,11 +32,16 @@ def test_full_registration_and_search_flow():
         "equipment_brands":["JBL","QSC"],"audience_capacity":500,"description":"Música para eventos"
     })
     assert profile.status_code == 200
+    choice = client.put("/api/users/me/avatar-preset", headers=mh,
+        json={"preset":"accordion","color":"#20C9B5"})
+    assert choice.status_code == 200
     restored = client.get("/api/musicians/me", headers=mh)
     assert restored.status_code == 200
     assert restored.json()["equipment_brands"] == ["JBL", "QSC"]
+    assert restored.json()["avatar_preset"] == "accordion"
     found = client.get("/api/musicians?q=Valle")
     assert found.status_code == 200 and found.json()[0]["group_name"] == "Los del Valle"
+    assert found.json()[0]["avatar_color"] == "#20C9B5"
     customer = client.post("/api/auth/register", json={"email":"cliente@example.com","password":"segura123","role":"client"})
     ch = {"Authorization": f"Bearer {customer.json()['access_token']}"}
     result = client.put("/api/clients/me", headers=ch, json={"name":"Luis","musical_tastes":["Norteño"],"favorite_groups":["Intocable"]})

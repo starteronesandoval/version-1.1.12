@@ -12,9 +12,9 @@ from sqlalchemy.orm import Session, selectinload
 from .auth import create_token, current_user, hash_password, require_role, verify_password
 from .config import settings
 from .database import Base, engine, get_db
-from .models import (ClientAvatar, ClientProfile, Media, MediaType,
+from .models import (AvatarChoice, ClientAvatar, ClientProfile, Media, MediaType,
                      MusicianProfile, User, UserRole)
-from .schemas import (ClientProfileResponse, ClientProfileUpsert, LoginRequest,
+from .schemas import (AvatarChoiceUpdate, ClientProfileResponse, ClientProfileUpsert, LoginRequest,
                       MusicianProfileResponse, MusicianProfileUpsert,
                       RegisterRequest, TokenResponse, UserResponse)
 
@@ -37,7 +37,22 @@ def values(raw: str) -> list[str]:
         return []
 
 
+def client_profiles():
+    return select(ClientProfile).options(
+        selectinload(ClientProfile.avatar),
+        selectinload(ClientProfile.user).selectinload(User.avatar_choice),
+    )
+
+
+def musician_profiles():
+    return select(MusicianProfile).options(
+        selectinload(MusicianProfile.media),
+        selectinload(MusicianProfile.user).selectinload(User.avatar_choice),
+    )
+
+
 def musician_out(profile: MusicianProfile) -> MusicianProfileResponse:
+    choice = profile.user.avatar_choice
     return MusicianProfileResponse(
         id=profile.id, user_id=profile.user_id, contact_name=profile.contact_name,
         group_name=profile.group_name, group_type=profile.group_type,
@@ -46,15 +61,20 @@ def musician_out(profile: MusicianProfile) -> MusicianProfileResponse:
         subwoofer_count=profile.subwoofer_count, mid_speaker_count=profile.mid_speaker_count,
         equipment_brands=values(profile.equipment_brands), audience_capacity=profile.audience_capacity,
         description=profile.description, media=profile.media,
+        avatar_preset=choice.preset if choice else "music",
+        avatar_color=choice.color if choice else "#8B5CF6",
     )
 
 
 def client_out(profile: ClientProfile) -> ClientProfileResponse:
+    choice = profile.user.avatar_choice
     return ClientProfileResponse(
         id=profile.id, user_id=profile.user_id, name=profile.name,
         musical_tastes=values(profile.musical_tastes),
         favorite_groups=values(profile.favorite_groups),
         avatar_url=profile.avatar.url if profile.avatar else None,
+        avatar_preset=choice.preset if choice else "music",
+        avatar_color=choice.color if choice else "#8B5CF6",
     )
 
 
@@ -86,9 +106,23 @@ def me(user: User = Depends(current_user)):
     return user
 
 
+@app.put("/api/users/me/avatar-preset")
+def set_avatar_preset(data: AvatarChoiceUpdate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    allowed = {"music", "microphone", "guitar", "accordion", "drums", "headphones", "star", "jaguar"}
+    if data.preset not in allowed:
+        raise HTTPException(422, "Avatar no disponible")
+    choice = db.scalar(select(AvatarChoice).where(AvatarChoice.user_id == user.id))
+    if choice:
+        choice.preset = data.preset; choice.color = data.color.upper()
+    else:
+        choice = AvatarChoice(user_id=user.id, preset=data.preset, color=data.color.upper()); db.add(choice)
+    db.commit(); db.refresh(choice)
+    return {"preset": choice.preset, "color": choice.color}
+
+
 @app.put("/api/clients/me", response_model=ClientProfileResponse)
 def upsert_client(data: ClientProfileUpsert, user: User = Depends(require_role(UserRole.client)), db: Session = Depends(get_db)):
-    profile = db.scalar(select(ClientProfile).options(selectinload(ClientProfile.avatar)).where(ClientProfile.user_id == user.id))
+    profile = db.scalar(client_profiles().where(ClientProfile.user_id == user.id))
     payload = data.model_dump(exclude={"musical_tastes", "favorite_groups"})
     payload.update(musical_tastes=csv(data.musical_tastes), favorite_groups=csv(data.favorite_groups))
     if profile:
@@ -96,13 +130,13 @@ def upsert_client(data: ClientProfileUpsert, user: User = Depends(require_role(U
     else:
         profile = ClientProfile(user_id=user.id, **payload); db.add(profile)
     db.commit()
-    profile = db.scalar(select(ClientProfile).options(selectinload(ClientProfile.avatar)).where(ClientProfile.user_id == user.id))
+    profile = db.scalar(client_profiles().where(ClientProfile.user_id == user.id))
     return client_out(profile)
 
 
 @app.get("/api/clients/me", response_model=ClientProfileResponse)
 def get_client(user: User = Depends(require_role(UserRole.client)), db: Session = Depends(get_db)):
-    profile = db.scalar(select(ClientProfile).options(selectinload(ClientProfile.avatar)).where(ClientProfile.user_id == user.id))
+    profile = db.scalar(client_profiles().where(ClientProfile.user_id == user.id))
     if not profile: raise HTTPException(404, "Completa tu perfil")
     return client_out(profile)
 
@@ -110,7 +144,7 @@ def get_client(user: User = Depends(require_role(UserRole.client)), db: Session 
 @app.post("/api/clients/me/avatar", status_code=201)
 def upload_client_avatar(file: UploadFile = File(...),
                          user: User = Depends(require_role(UserRole.client)), db: Session = Depends(get_db)):
-    profile = db.scalar(select(ClientProfile).options(selectinload(ClientProfile.avatar)).where(ClientProfile.user_id == user.id))
+    profile = db.scalar(client_profiles().where(ClientProfile.user_id == user.id))
     if not profile: raise HTTPException(409, "Crea primero tu perfil de cliente")
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(415, "La foto de perfil debe ser una imagen")
@@ -138,13 +172,13 @@ def upsert_musician(data: MusicianProfileUpsert, user: User = Depends(require_ro
     else:
         profile = MusicianProfile(user_id=user.id, **payload); db.add(profile)
     db.commit()
-    profile = db.scalar(select(MusicianProfile).options(selectinload(MusicianProfile.media)).where(MusicianProfile.user_id == user.id))
+    profile = db.scalar(musician_profiles().where(MusicianProfile.user_id == user.id))
     return musician_out(profile)
 
 
 @app.get("/api/musicians/me", response_model=MusicianProfileResponse)
 def get_musician(user: User = Depends(require_role(UserRole.musician)), db: Session = Depends(get_db)):
-    profile = db.scalar(select(MusicianProfile).options(selectinload(MusicianProfile.media)).where(MusicianProfile.user_id == user.id))
+    profile = db.scalar(musician_profiles().where(MusicianProfile.user_id == user.id))
     if not profile: raise HTTPException(404, "Completa tu perfil")
     return musician_out(profile)
 
@@ -153,7 +187,7 @@ def get_musician(user: User = Depends(require_role(UserRole.musician)), db: Sess
 def search_musicians(q: str = "", group_type: str | None = None, musical_style: str | None = None,
                      max_hourly_rate: float | None = Query(None, ge=0), includes_sound: bool | None = None,
                      skip: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
-    stmt = select(MusicianProfile).options(selectinload(MusicianProfile.media))
+    stmt = musician_profiles()
     if q:
         term = f"%{q}%"; stmt = stmt.where(or_(MusicianProfile.group_name.ilike(term), MusicianProfile.group_type.ilike(term), MusicianProfile.musical_style.ilike(term)))
     if group_type: stmt = stmt.where(MusicianProfile.group_type.ilike(f"%{group_type}%"))
@@ -165,7 +199,7 @@ def search_musicians(q: str = "", group_type: str | None = None, musical_style: 
 
 @app.get("/api/musicians/{musician_id}", response_model=MusicianProfileResponse)
 def musician_detail(musician_id: int, db: Session = Depends(get_db)):
-    profile = db.scalar(select(MusicianProfile).options(selectinload(MusicianProfile.media)).where(MusicianProfile.id == musician_id))
+    profile = db.scalar(musician_profiles().where(MusicianProfile.id == musician_id))
     if not profile: raise HTTPException(404, "Agrupación no encontrada")
     return musician_out(profile)
 

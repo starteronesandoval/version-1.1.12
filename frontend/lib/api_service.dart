@@ -117,4 +117,9 @@ class ApiService {
     request.files.add(await http.MultipartFile.fromPath('file', file.path));
     _decode(await http.Response.fromStream(await request.send()));
   }
+
+  Future<void> setAvatarPreset(String preset, String color) async {
+    await put(
+        '/api/users/me/avatar-preset', {'preset': preset, 'color': color});
+  }
 }

@@ -86,10 +86,14 @@ class ProfileAvatar extends StatelessWidget {
       {super.key,
       this.url,
       required this.fallback,
+      this.preset = 'music',
+      this.color = '#8B5CF6',
       this.radius = 48,
       this.onTap});
   final String? url;
   final String fallback;
+  final String preset;
+  final String color;
   final double radius;
   final VoidCallback? onTap;
 
@@ -105,16 +109,156 @@ class ProfileAvatar extends StatelessWidget {
           ),
           child: CircleAvatar(
             radius: radius,
-            backgroundColor: const Color(0xFF241642),
+            backgroundColor: avatarColor(color),
             backgroundImage: url == null ? null : NetworkImage(url!),
             child: url == null
-                ? Text(fallback.isEmpty ? '?' : fallback[0].toUpperCase(),
-                    style: TextStyle(
-                        fontSize: radius * .7,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white))
+                ? Icon(avatarIcon(preset),
+                    size: radius * .92, color: Colors.white)
                 : null,
           ),
         ),
       );
+}
+
+Color avatarColor(String hex) {
+  final clean = hex.replaceFirst('#', '');
+  return Color(int.tryParse('FF$clean', radix: 16) ?? 0xFF8B5CF6);
+}
+
+IconData avatarIcon(String preset) =>
+    const {
+      'music': Icons.music_note_rounded,
+      'microphone': Icons.mic_rounded,
+      'guitar': Icons.music_video_rounded,
+      'accordion': Icons.piano_rounded,
+      'drums': Icons.album_rounded,
+      'headphones': Icons.headphones_rounded,
+      'star': Icons.star_rounded,
+      'jaguar': Icons.pets_rounded,
+    }[preset] ??
+    Icons.music_note_rounded;
+
+const avatarPresets = <String>[
+  'music',
+  'microphone',
+  'guitar',
+  'accordion',
+  'drums',
+  'headphones',
+  'star',
+  'jaguar',
+];
+
+const avatarColors = <String>[
+  '#8B5CF6',
+  '#EC4899',
+  '#0EA5E9',
+  '#14B8A6',
+  '#F59E0B',
+  '#EF4444',
+  '#6366F1',
+  '#334155',
+];
+
+class AvatarSelection {
+  const AvatarSelection(this.preset, this.color);
+  final String preset;
+  final String color;
+}
+
+Future<AvatarSelection?> showAvatarPicker(
+  BuildContext context, {
+  required String currentPreset,
+  required String currentColor,
+}) async {
+  var preset = currentPreset;
+  var color = currentColor;
+  return showModalBottomSheet<AvatarSelection>(
+    context: context,
+    backgroundColor: const Color(0xFF1C1235),
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: (sheetContext) => StatefulBuilder(
+      builder: (_, setSheetState) => Padding(
+        padding: const EdgeInsets.fromLTRB(22, 4, 22, 30),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Crea tu avatar',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 8),
+            Text('Elige un símbolo y un color que te representen.',
+                style: TextStyle(color: Colors.white.withValues(alpha: .62))),
+            const SizedBox(height: 20),
+            ProfileAvatar(
+                fallback: 'A', preset: preset, color: color, radius: 52),
+            const SizedBox(height: 22),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 4,
+                mainAxisSpacing: 10,
+                crossAxisSpacing: 10,
+              ),
+              itemCount: avatarPresets.length,
+              itemBuilder: (_, index) {
+                final item = avatarPresets[index];
+                return InkWell(
+                  borderRadius: BorderRadius.circular(18),
+                  onTap: () => setSheetState(() => preset = item),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: item == preset
+                          ? Colors.white.withValues(alpha: .18)
+                          : Colors.white.withValues(alpha: .06),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                          color: item == preset
+                              ? const Color(0xFFC7ACFF)
+                              : Colors.transparent,
+                          width: 2),
+                    ),
+                    child: Icon(avatarIcon(item), color: Colors.white),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 18),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                for (final item in avatarColors)
+                  GestureDetector(
+                    onTap: () => setSheetState(() => color = item),
+                    child: Container(
+                      width: item == color ? 34 : 28,
+                      height: item == color ? 34 : 28,
+                      decoration: BoxDecoration(
+                        color: avatarColor(item),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                            color: item == color
+                                ? Colors.white
+                                : Colors.transparent,
+                            width: 3),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(52)),
+              onPressed: () =>
+                  Navigator.pop(sheetContext, AvatarSelection(preset, color)),
+              icon: const Icon(Icons.check_circle_outline),
+              label: const Text('Usar este avatar'),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }

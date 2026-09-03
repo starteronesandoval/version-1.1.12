@@ -151,6 +151,19 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
     await loadProfile();
   }
 
+  Future<void> chooseAvatar() async {
+    final selection = await showAvatarPicker(
+      context,
+      currentPreset: profile?['avatar_preset'] ?? 'music',
+      currentColor: profile?['avatar_color'] ?? '#8B5CF6',
+    );
+    if (selection == null) return;
+    await widget.api.setAvatarPreset(selection.preset, selection.color);
+    if (!mounted) return;
+    setState(() => loading = true);
+    await loadProfile();
+  }
+
   @override
   void dispose() {
     for (final controller in fields.values) {
@@ -214,9 +227,21 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
                   ProfileAvatar(
                     url: widget.api.mediaUrl(avatar?['url']),
                     fallback: data['group_name'],
+                    preset: data['avatar_preset'] ?? 'music',
+                    color: data['avatar_color'] ?? '#8B5CF6',
                     radius: 58,
-                    onTap: () => pick('profile_photo', 1),
+                    onTap: chooseAvatar,
                   ),
+                  Positioned(
+                      left: -4,
+                      bottom: 2,
+                      child: CircleAvatar(
+                          radius: 17,
+                          child: IconButton(
+                              padding: EdgeInsets.zero,
+                              iconSize: 17,
+                              onPressed: chooseAvatar,
+                              icon: const Icon(Icons.palette_outlined)))),
                   Positioned(
                       right: -4,
                       bottom: 2,
