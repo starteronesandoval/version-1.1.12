@@ -1,0 +1,381 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+
+import '../api_service.dart';
+import '../widgets/glass_ui.dart';
+
+class ClientHome extends StatefulWidget {
+  const ClientHome({super.key, required this.api, required this.onLogout});
+  final ApiService api;
+  final VoidCallback onLogout;
+  @override
+  State<ClientHome> createState() => _ClientHomeState();
+}
+
+class _ClientHomeState extends State<ClientHome> {
+  final search = TextEditingController();
+  final picker = ImagePicker();
+  List<dynamic> results = [];
+  Map<String, dynamic>? clientProfile;
+  bool loading = true;
+  Timer? debounce;
+
+  @override
+  void initState() {
+    super.initState();
+    load();
+    loadClientProfile();
+  }
+
+  Future<void> load() async {
+    if (mounted) setState(() => loading = true);
+    try {
+      results = await widget.api
+          .get('/api/musicians?q=${Uri.encodeQueryComponent(search.text)}');
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> loadClientProfile() async {
+    try {
+      clientProfile =
+          await widget.api.get('/api/clients/me') as Map<String, dynamic>;
+      if (mounted) setState(() {});
+    } on ApiException catch (error) {
+      if (error.statusCode != 404 && mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    debounce?.cancel();
+    search.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        extendBodyBehindAppBar: true,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          title: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Descubre', style: TextStyle(fontWeight: FontWeight.w800)),
+                Text('música para tu momento',
+                    style: TextStyle(fontSize: 12, color: Color(0xFFC8B5EE))),
+              ]),
+          actions: [
+            IconButton(
+                onPressed: () => _profileSheet(context), icon: _smallAvatar()),
+            IconButton(
+                onPressed: widget.onLogout, icon: const Icon(Icons.logout)),
+          ],
+        ),
+        body: GlassBackground(
+          child: SafeArea(
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 12),
+                  child: GlassCard(
+                    padding: EdgeInsets.zero,
+                    child: TextField(
+                      controller: search,
+                      onChanged: (_) {
+                        debounce?.cancel();
+                        debounce =
+                            Timer(const Duration(milliseconds: 350), load);
+                      },
+                      decoration: const InputDecoration(
+                        prefixIcon: Icon(Icons.search),
+                        hintText: 'Busca nombre, estilo o tipo de grupo',
+                        border: InputBorder.none,
+                      ),
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Row(children: [
+                    const Expanded(
+                        child: Text('Agrupaciones disponibles',
+                            style: TextStyle(
+                                fontSize: 19, fontWeight: FontWeight.w700))),
+                    Text('${results.length}',
+                        style: const TextStyle(
+                            color: Color(0xFFBFA1FF),
+                            fontWeight: FontWeight.w700)),
+                  ]),
+                ),
+                const SizedBox(height: 10),
+                if (loading) const LinearProgressIndicator(minHeight: 2),
+                Expanded(
+                  child: results.isEmpty && !loading
+                      ? const Center(
+                          child: Text('Aún no encontramos agrupaciones'))
+                      : ListView.separated(
+                          padding: const EdgeInsets.fromLTRB(18, 6, 18, 100),
+                          itemCount: results.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 14),
+                          itemBuilder: (_, index) =>
+                              _bandCard(results[index] as Map<String, dynamic>),
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: () => _profileSheet(context),
+          icon: const Icon(Icons.person_outline),
+          label: const Text('Mi perfil'),
+        ),
+      );
+
+  Widget _smallAvatar() => ProfileAvatar(
+        radius: 17,
+        url: widget.api.mediaUrl(clientProfile?['avatar_url']),
+        fallback: clientProfile?['name'] ?? 'C',
+      );
+
+  Widget _bandCard(Map<String, dynamic> band) {
+    final media =
+        (band['media'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+    final avatar = media
+        .where((item) => item['media_type'] == 'profile_photo')
+        .firstOrNull;
+    return GlassCard(
+      onTap: () => _showBand(context, band),
+      child: Row(
+        children: [
+          ProfileAvatar(
+              url: widget.api.mediaUrl(avatar?['url']),
+              fallback: band['group_name'],
+              radius: 38),
+          const SizedBox(width: 14),
+          Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Row(children: [
+                  Expanded(
+                      child: Text(band['group_name'],
+                          style: const TextStyle(
+                              fontSize: 17, fontWeight: FontWeight.w800))),
+                  const Icon(Icons.verified, color: Color(0xFF68DDCD), size: 18)
+                ]),
+                const SizedBox(height: 4),
+                Text('${band['group_type']} · ${band['musical_style']}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style:
+                        TextStyle(color: Colors.white.withValues(alpha: .67))),
+                const SizedBox(height: 10),
+                Row(children: [
+                  const Icon(Icons.payments_outlined,
+                      size: 17, color: Color(0xFFBFA1FF)),
+                  Text('  \$${band['hourly_rate']} / hora',
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  const Spacer(),
+                  if (band['includes_sound'])
+                    const Icon(Icons.speaker_group_outlined,
+                        size: 19, color: Color(0xFF68DDCD)),
+                ]),
+              ])),
+        ],
+      ),
+    );
+  }
+
+  void _showBand(BuildContext context, Map<String, dynamic> band) {
+    final media =
+        (band['media'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+    final avatar = media
+        .where((item) => item['media_type'] == 'profile_photo')
+        .firstOrNull;
+    final photos =
+        media.where((item) => item['media_type'] == 'photo').toList();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1C1235),
+      showDragHandle: true,
+      builder: (sheetContext) => DraggableScrollableSheet(
+        initialChildSize: .72,
+        maxChildSize: .94,
+        expand: false,
+        builder: (_, controller) => ListView(
+            controller: controller,
+            padding: const EdgeInsets.fromLTRB(22, 4, 22, 28),
+            children: [
+              Center(
+                  child: ProfileAvatar(
+                      url: widget.api.mediaUrl(avatar?['url']),
+                      fallback: band['group_name'],
+                      radius: 56)),
+              const SizedBox(height: 14),
+              Text(band['group_name'],
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context)
+                      .textTheme
+                      .headlineSmall
+                      ?.copyWith(fontWeight: FontWeight.w800)),
+              Text('${band['group_type']} · ${band['musical_style']}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Color(0xFFBFA1FF))),
+              const SizedBox(height: 18),
+              Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+                _miniStat('${band['member_count']}', 'Integrantes'),
+                _miniStat('${band['audience_capacity']}', 'Personas'),
+                _miniStat('\$${band['hourly_rate']}', 'Por hora'),
+              ]),
+              const SizedBox(height: 20),
+              Text(band['description'], style: const TextStyle(height: 1.5)),
+              const SizedBox(height: 18),
+              Wrap(spacing: 8, children: [
+                if (band['includes_sound'])
+                  const Chip(label: Text('Sonido incluido')),
+                for (final brand in band['equipment_brands'])
+                  Chip(label: Text(brand))
+              ]),
+              if (photos.isNotEmpty) ...[
+                const SizedBox(height: 18),
+                const Text('Galería',
+                    style:
+                        TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 10),
+                SizedBox(
+                    height: 150,
+                    child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: photos.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: 10),
+                        itemBuilder: (_, i) => ClipRRect(
+                            borderRadius: BorderRadius.circular(18),
+                            child: Image.network(
+                                widget.api.mediaUrl(photos[i]['url'])!,
+                                width: 190,
+                                fit: BoxFit.cover)))),
+              ],
+              const SizedBox(height: 24),
+              FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(54)),
+                  onPressed: () => Navigator.pop(sheetContext),
+                  icon: const Icon(Icons.calendar_month),
+                  label: const Text('Solicitar disponibilidad')),
+            ]),
+      ),
+    );
+  }
+
+  Widget _miniStat(String value, String label) => Column(children: [
+        Text(value,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+        Text(label,
+            style: TextStyle(
+                fontSize: 12, color: Colors.white.withValues(alpha: .55)))
+      ]);
+
+  Future<void> _pickClientAvatar() async {
+    final image =
+        await picker.pickImage(source: ImageSource.gallery, imageQuality: 88);
+    if (image == null) return;
+    await widget.api.uploadClientAvatar(File(image.path));
+    await loadClientProfile();
+  }
+
+  Future<void> _profileSheet(BuildContext context) async {
+    final name = TextEditingController(text: clientProfile?['name'] ?? '');
+    final tastes = TextEditingController(
+        text: (clientProfile?['musical_tastes'] as List<dynamic>? ?? [])
+            .join(', '));
+    final favorites = TextEditingController(
+        text: (clientProfile?['favorite_groups'] as List<dynamic>? ?? [])
+            .join(', '));
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1C1235),
+      showDragHandle: true,
+      builder: (sheetContext) => Padding(
+        padding: EdgeInsets.fromLTRB(
+            22, 4, 22, MediaQuery.viewInsetsOf(sheetContext).bottom + 28),
+        child: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Stack(children: [
+            ProfileAvatar(
+                url: widget.api.mediaUrl(clientProfile?['avatar_url']),
+                fallback: clientProfile?['name'] ?? 'C',
+                radius: 50),
+            if (clientProfile != null)
+              Positioned(
+                  right: 0,
+                  bottom: 0,
+                  child: CircleAvatar(
+                      radius: 16,
+                      child: IconButton(
+                          padding: EdgeInsets.zero,
+                          iconSize: 16,
+                          onPressed: _pickClientAvatar,
+                          icon: const Icon(Icons.camera_alt)))),
+          ]),
+          const SizedBox(height: 12),
+          Text(clientProfile == null ? 'Crea tu perfil' : 'Tu perfil',
+              style: Theme.of(context)
+                  .textTheme
+                  .headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w800)),
+          const SizedBox(height: 20),
+          TextField(
+              controller: name,
+              decoration: const InputDecoration(
+                  labelText: 'Nombre', prefixIcon: Icon(Icons.person_outline))),
+          const SizedBox(height: 12),
+          TextField(
+              controller: tastes,
+              decoration: const InputDecoration(
+                  labelText: 'Gustos musicales',
+                  hintText: 'Norteño, banda, mariachi')),
+          const SizedBox(height: 12),
+          TextField(
+              controller: favorites,
+              decoration: const InputDecoration(labelText: 'Grupos favoritos')),
+          const SizedBox(height: 18),
+          FilledButton.icon(
+            style:
+                FilledButton.styleFrom(minimumSize: const Size.fromHeight(54)),
+            onPressed: () async {
+              final saved = await widget.api.put('/api/clients/me', {
+                'name': name.text,
+                'musical_tastes': tastes.text.split(','),
+                'favorite_groups': favorites.text.split(','),
+              }) as Map<String, dynamic>;
+              clientProfile = saved;
+              if (!sheetContext.mounted || !mounted) return;
+              Navigator.pop(sheetContext);
+              setState(() {});
+              ScaffoldMessenger.of(this.context).showSnackBar(const SnackBar(
+                  content:
+                      Text('Perfil guardado. Ya puedes agregar tu foto.')));
+            },
+            icon: const Icon(Icons.auto_awesome),
+            label: const Text('Guardar mi perfil'),
+          ),
+        ])),
+      ),
+    );
+    name.dispose();
+    tastes.dispose();
+    favorites.dispose();
+  }
+}

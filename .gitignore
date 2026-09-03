@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+backend/.venv/
+backend/.env
+backend/*.db
+backend/uploads/
+backend/test_uploads/
+backend/*.log
+
+# Flutter
+frontend/.dart_tool/
+frontend/build/
+frontend/.flutter-plugins*
+frontend/android/.gradle/
+frontend/ios/Pods/
+
+# IDE
+.idea/
+*.iml
+
+# Plantilla Java anterior y archivos locales de demostración
+/src/
+/out/
+/balam-*.png
