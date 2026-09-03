@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 
 import '../api_service.dart';
@@ -59,24 +61,69 @@ class _AuthScreenState extends State<AuthScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Container(
-                          width: 68,
-                          height: 68,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: const LinearGradient(
-                                colors: [Color(0xFFA56CFF), Color(0xFF35D8C6)]),
-                            boxShadow: [
-                              BoxShadow(
-                                  color: const Color(0xFFA56CFF)
-                                      .withValues(alpha: .35),
-                                  blurRadius: 30)
-                            ],
+                        SizedBox(
+                          height: 104,
+                          child: Center(
+                            child: Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                ImageFiltered(
+                                  imageFilter:
+                                      ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                                  child: Opacity(
+                                    opacity: .22,
+                                    child: Image.asset(
+                                      'assets/branding/balam_corp.png',
+                                      width: 224,
+                                      fit: BoxFit.contain,
+                                    ),
+                                  ),
+                                ),
+                                ShaderMask(
+                                  blendMode: BlendMode.dstIn,
+                                  shaderCallback: (bounds) =>
+                                      const LinearGradient(
+                                    colors: [
+                                      Colors.transparent,
+                                      Colors.white,
+                                      Colors.white,
+                                      Colors.transparent,
+                                    ],
+                                    stops: [0, .16, .84, 1],
+                                  ).createShader(bounds),
+                                  child: ShaderMask(
+                                    blendMode: BlendMode.dstIn,
+                                    shaderCallback: (bounds) =>
+                                        const LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [
+                                        Colors.transparent,
+                                        Colors.white,
+                                        Colors.white,
+                                        Colors.transparent,
+                                      ],
+                                      stops: [0, .2, .8, 1],
+                                    ).createShader(bounds),
+                                    child: ImageFiltered(
+                                      imageFilter: ImageFilter.blur(
+                                          sigmaX: .45, sigmaY: .45),
+                                      child: Opacity(
+                                        opacity: .86,
+                                        child: Image.asset(
+                                          'assets/branding/balam_corp.png',
+                                          width: 214,
+                                          fit: BoxFit.contain,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                          child: const Icon(Icons.graphic_eq_rounded,
-                              size: 38, color: Colors.white),
                         ),
-                        const SizedBox(height: 22),
+                        const SizedBox(height: 14),
                         const Text('BALAM',
                             style: TextStyle(
                                 letterSpacing: 5,
@@ -85,7 +132,7 @@ class _AuthScreenState extends State<AuthScreen> {
                         const SizedBox(height: 8),
                         Text(
                             registerMode
-                                ? 'Tu música, tu escenario'
+                                ? '¡Conecta, contrata y disfruta!'
                                 : 'Qué bueno tenerte de vuelta',
                             style: Theme.of(context)
                                 .textTheme
@@ -94,7 +141,7 @@ class _AuthScreenState extends State<AuthScreen> {
                         const SizedBox(height: 8),
                         Text(
                             registerMode
-                                ? 'Crea un perfil y conecta con la escena musical.'
+                                ? 'Conéctate con las agrupaciones con mejor ranking de tu zona.'
                                 : 'Entra para continuar con tu comunidad.',
                             style: TextStyle(
                                 color: Colors.white.withValues(alpha: .68))),

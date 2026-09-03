@@ -9,7 +9,7 @@ void main() {
       MaterialApp(home: AuthScreen(api: ApiService(), onSignedIn: (_) {})),
     );
 
-    expect(find.text('Tu música, tu escenario'), findsOneWidget);
+    expect(find.text('¡Conecta, contrata y disfruta!'), findsOneWidget);
     expect(find.text('Cliente'), findsOneWidget);
     expect(find.text('Agrupación'), findsOneWidget);
   });
