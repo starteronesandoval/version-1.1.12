@@ -145,7 +145,7 @@ class _ClientHomeState extends State<ClientHome> {
         radius: 17,
         url: widget.api.mediaUrl(clientProfile?['avatar_url']),
         fallback: clientProfile?['name'] ?? 'C',
-        preset: clientProfile?['avatar_preset'] ?? 'music',
+        preset: clientProfile?['avatar_preset'] ?? 'jaguar_guitar',
         color: clientProfile?['avatar_color'] ?? '#8B5CF6',
       );
 
@@ -162,7 +162,7 @@ class _ClientHomeState extends State<ClientHome> {
           ProfileAvatar(
               url: widget.api.mediaUrl(avatar?['url']),
               fallback: band['group_name'],
-              preset: band['avatar_preset'] ?? 'music',
+              preset: band['avatar_preset'] ?? 'jaguar_guitar',
               color: band['avatar_color'] ?? '#8B5CF6',
               radius: 38),
           const SizedBox(width: 14),
@@ -225,7 +225,7 @@ class _ClientHomeState extends State<ClientHome> {
                   child: ProfileAvatar(
                       url: widget.api.mediaUrl(avatar?['url']),
                       fallback: band['group_name'],
-                      preset: band['avatar_preset'] ?? 'music',
+                      preset: band['avatar_preset'] ?? 'jaguar_guitar',
                       color: band['avatar_color'] ?? '#8B5CF6',
                       radius: 56)),
               const SizedBox(height: 14),
@@ -295,7 +295,7 @@ class _ClientHomeState extends State<ClientHome> {
   Future<void> _pickPreset() async {
     final selection = await showAvatarPicker(
       context,
-      currentPreset: clientProfile?['avatar_preset'] ?? 'music',
+      currentPreset: clientProfile?['avatar_preset'] ?? 'jaguar_guitar',
       currentColor: clientProfile?['avatar_color'] ?? '#8B5CF6',
     );
     if (selection == null) return;
@@ -333,7 +333,7 @@ class _ClientHomeState extends State<ClientHome> {
             ProfileAvatar(
                 url: widget.api.mediaUrl(clientProfile?['avatar_url']),
                 fallback: clientProfile?['name'] ?? 'C',
-                preset: clientProfile?['avatar_preset'] ?? 'music',
+                preset: clientProfile?['avatar_preset'] ?? 'jaguar_guitar',
                 color: clientProfile?['avatar_color'] ?? '#8B5CF6',
                 radius: 50),
             if (clientProfile != null)

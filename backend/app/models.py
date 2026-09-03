@@ -37,7 +37,7 @@ class AvatarChoice(Base):
     __tablename__ = "avatar_choices"
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
-    preset: Mapped[str] = mapped_column(String(40), default="music")
+    preset: Mapped[str] = mapped_column(String(40), default="jaguar_guitar")
     color: Mapped[str] = mapped_column(String(9), default="#8B5CF6")
     user: Mapped[User] = relationship(back_populates="avatar_choice")
 

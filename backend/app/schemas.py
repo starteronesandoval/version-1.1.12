@@ -40,7 +40,7 @@ class ClientProfileResponse(ClientProfileUpsert):
     id: int
     user_id: int
     avatar_url: str | None = None
-    avatar_preset: str = "music"
+    avatar_preset: str = "jaguar_guitar"
     avatar_color: str = "#8B5CF6"
 
 
@@ -76,5 +76,5 @@ class MusicianProfileResponse(MusicianProfileUpsert):
     id: int
     user_id: int
     media: list[MediaResponse] = Field(default_factory=list)
-    avatar_preset: str = "music"
+    avatar_preset: str = "jaguar_guitar"
     avatar_color: str = "#8B5CF6"

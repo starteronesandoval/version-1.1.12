@@ -154,7 +154,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
   Future<void> chooseAvatar() async {
     final selection = await showAvatarPicker(
       context,
-      currentPreset: profile?['avatar_preset'] ?? 'music',
+      currentPreset: profile?['avatar_preset'] ?? 'jaguar_guitar',
       currentColor: profile?['avatar_color'] ?? '#8B5CF6',
     );
     if (selection == null) return;
@@ -227,7 +227,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
                   ProfileAvatar(
                     url: widget.api.mediaUrl(avatar?['url']),
                     fallback: data['group_name'],
-                    preset: data['avatar_preset'] ?? 'music',
+                    preset: data['avatar_preset'] ?? 'jaguar_guitar',
                     color: data['avatar_color'] ?? '#8B5CF6',
                     radius: 58,
                     onTap: chooseAvatar,

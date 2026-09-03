@@ -61,7 +61,7 @@ def musician_out(profile: MusicianProfile) -> MusicianProfileResponse:
         subwoofer_count=profile.subwoofer_count, mid_speaker_count=profile.mid_speaker_count,
         equipment_brands=values(profile.equipment_brands), audience_capacity=profile.audience_capacity,
         description=profile.description, media=profile.media,
-        avatar_preset=choice.preset if choice else "music",
+        avatar_preset=choice.preset if choice else "jaguar_guitar",
         avatar_color=choice.color if choice else "#8B5CF6",
     )
 
@@ -73,7 +73,7 @@ def client_out(profile: ClientProfile) -> ClientProfileResponse:
         musical_tastes=values(profile.musical_tastes),
         favorite_groups=values(profile.favorite_groups),
         avatar_url=profile.avatar.url if profile.avatar else None,
-        avatar_preset=choice.preset if choice else "music",
+        avatar_preset=choice.preset if choice else "jaguar_guitar",
         avatar_color=choice.color if choice else "#8B5CF6",
     )
 
@@ -108,7 +108,14 @@ def me(user: User = Depends(current_user)):
 
 @app.put("/api/users/me/avatar-preset")
 def set_avatar_preset(data: AvatarChoiceUpdate, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    allowed = {"music", "microphone", "guitar", "accordion", "drums", "headphones", "star", "jaguar"}
+    allowed = {
+        "jaguar_guitar", "jaguar_accordion", "jaguar_dj", "coyote_singer", "coyote_guitar", "coyote_drums",
+        "owl_violin", "owl_keyboard", "owl_sax", "fox_bass", "fox_mariachi", "fox_singer", "bear_tuba",
+        "bear_drums", "bear_accordion", "eagle_trumpet", "eagle_guitar", "eagle_dj", "rabbit_violin",
+        "lion_trumpet", "lion_conductor", "lion_tuba", "axolotl_guitar", "axolotl_dj", "raccoon_bass",
+        "deer_harp", "bull_trombone", "cat_violin", "elephant_cello", "turtle_flute",
+        "music", "microphone", "guitar", "accordion", "drums", "headphones", "star", "jaguar",
+    }
     if data.preset not in allowed:
         raise HTTPException(422, "Avatar no disponible")
     choice = db.scalar(select(AvatarChoice).where(AvatarChoice.user_id == user.id))

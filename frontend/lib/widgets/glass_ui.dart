@@ -86,7 +86,7 @@ class ProfileAvatar extends StatelessWidget {
       {super.key,
       this.url,
       required this.fallback,
-      this.preset = 'music',
+      this.preset = 'jaguar_guitar',
       this.color = '#8B5CF6',
       this.radius = 48,
       this.onTap});
@@ -98,26 +98,35 @@ class ProfileAvatar extends StatelessWidget {
   final VoidCallback? onTap;
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.all(3),
-          decoration: const BoxDecoration(
-            shape: BoxShape.circle,
-            gradient:
-                LinearGradient(colors: [Color(0xFFC29BFF), Color(0xFF53E0D0)]),
-          ),
-          child: CircleAvatar(
-            radius: radius,
-            backgroundColor: avatarColor(color),
-            backgroundImage: url == null ? null : NetworkImage(url!),
-            child: url == null
-                ? Icon(avatarIcon(preset),
-                    size: radius * .92, color: Colors.white)
-                : null,
-          ),
+  Widget build(BuildContext context) {
+    final generatedAsset = avatarAsset(preset);
+    ImageProvider? image;
+    if (url != null) {
+      image = NetworkImage(url!);
+    } else if (generatedAsset != null) {
+      image = AssetImage(generatedAsset);
+    }
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(3),
+        decoration: const BoxDecoration(
+          shape: BoxShape.circle,
+          gradient:
+              LinearGradient(colors: [Color(0xFFC29BFF), Color(0xFF53E0D0)]),
         ),
-      );
+        child: CircleAvatar(
+          radius: radius,
+          backgroundColor: avatarColor(color),
+          backgroundImage: image,
+          child: image == null
+              ? Icon(avatarIcon(preset),
+                  size: radius * .92, color: Colors.white)
+              : null,
+        ),
+      ),
+    );
+  }
 }
 
 Color avatarColor(String hex) {
@@ -139,15 +148,40 @@ IconData avatarIcon(String preset) =>
     Icons.music_note_rounded;
 
 const avatarPresets = <String>[
-  'music',
-  'microphone',
-  'guitar',
-  'accordion',
-  'drums',
-  'headphones',
-  'star',
-  'jaguar',
+  'jaguar_guitar',
+  'jaguar_accordion',
+  'jaguar_dj',
+  'coyote_singer',
+  'coyote_guitar',
+  'coyote_drums',
+  'owl_violin',
+  'owl_keyboard',
+  'owl_sax',
+  'fox_bass',
+  'fox_mariachi',
+  'fox_singer',
+  'bear_tuba',
+  'bear_drums',
+  'bear_accordion',
+  'eagle_trumpet',
+  'eagle_guitar',
+  'eagle_dj',
+  'rabbit_violin',
+  'lion_trumpet',
+  'lion_conductor',
+  'lion_tuba',
+  'axolotl_guitar',
+  'axolotl_dj',
+  'raccoon_bass',
+  'deer_harp',
+  'bull_trombone',
+  'cat_violin',
+  'elephant_cello',
+  'turtle_flute',
 ];
+
+String? avatarAsset(String preset) =>
+    avatarPresets.contains(preset) ? 'assets/avatars/$preset.png' : null;
 
 const avatarColors = <String>[
   '#8B5CF6',
@@ -193,36 +227,41 @@ Future<AvatarSelection?> showAvatarPicker(
             ProfileAvatar(
                 fallback: 'A', preset: preset, color: color, radius: 52),
             const SizedBox(height: 22),
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 4,
-                mainAxisSpacing: 10,
-                crossAxisSpacing: 10,
-              ),
-              itemCount: avatarPresets.length,
-              itemBuilder: (_, index) {
-                final item = avatarPresets[index];
-                return InkWell(
-                  borderRadius: BorderRadius.circular(18),
-                  onTap: () => setSheetState(() => preset = item),
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: item == preset
-                          ? Colors.white.withValues(alpha: .18)
-                          : Colors.white.withValues(alpha: .06),
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(
-                          color: item == preset
-                              ? const Color(0xFFC7ACFF)
-                              : Colors.transparent,
-                          width: 2),
+            SizedBox(
+              height: 350,
+              child: GridView.builder(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3,
+                  mainAxisSpacing: 10,
+                  crossAxisSpacing: 10,
+                ),
+                itemCount: avatarPresets.length,
+                itemBuilder: (_, index) {
+                  final item = avatarPresets[index];
+                  return InkWell(
+                    borderRadius: BorderRadius.circular(18),
+                    onTap: () => setSheetState(() => preset = item),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: item == preset
+                            ? Colors.white.withValues(alpha: .18)
+                            : Colors.white.withValues(alpha: .06),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                            color: item == preset
+                                ? const Color(0xFFC7ACFF)
+                                : Colors.transparent,
+                            width: 2),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child:
+                            Image.asset(avatarAsset(item)!, fit: BoxFit.cover),
+                      ),
                     ),
-                    child: Icon(avatarIcon(item), color: Colors.white),
-                  ),
-                );
-              },
+                  );
+                },
+              ),
             ),
             const SizedBox(height: 18),
             Row(
