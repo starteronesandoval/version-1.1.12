@@ -14,15 +14,6 @@ class RhythmGameScreen extends StatefulWidget {
 
 class _RhythmGameScreenState extends State<RhythmGameScreen>
     with SingleTickerProviderStateMixin {
-  static const _bpm = 80;
-  static const _beatMilliseconds = 60000 / _bpm;
-  static const _figures = <_RhythmFigure>[
-    _RhythmFigure('Redonda', '𝅝', 4),
-    _RhythmFigure('Blanca', '𝅗𝅥', 2),
-    _RhythmFigure('Negra', '♩', 1),
-    _RhythmFigure('Corchea', '♪', .5),
-    _RhythmFigure('Semicorchea', '♬', .25),
-  ];
   static const _pitches = <_Pitch>[
     _Pitch('DO', Color(0xFFFF6680)),
     _Pitch('RE', Color(0xFFFF9B57)),
@@ -32,32 +23,29 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
     _Pitch('LA', Color(0xFF788BFF)),
     _Pitch('SI', Color(0xFFC879F4)),
   ];
+  // Nueve posiciones, leídas de derecha a izquierda sobre las cinco líneas.
+  static const _staffPositions = <int>[2, 3, 4, 5, 6, 0, 1, 2, 3];
 
   final _random = math.Random();
-  final _holdWatch = Stopwatch();
   late final AnimationController _fallController;
   Timer? _nextTimer;
   Timer? _missTimer;
-  late _RhythmFigure _figure;
-  int _pitchIndex = 0;
+  int _positionIndex = 0;
   int? _pressedPitch;
   int _score = 0;
   int _streak = 0;
   int _lives = 3;
   int _round = 1;
-  bool _holding = false;
   bool _waiting = false;
-  bool _perfectEntry = false;
   String _feedback = '';
   Color _feedbackColor = Colors.transparent;
 
-  int get _targetMilliseconds => (_figure.beats * _beatMilliseconds).round();
+  int get _pitchIndex => _staffPositions[_positionIndex];
 
   @override
   void initState() {
     super.initState();
-    _figure = _figures[_random.nextInt(_figures.length)];
-    _pitchIndex = _random.nextInt(_pitches.length);
+    _positionIndex = _random.nextInt(_staffPositions.length);
     _fallController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 2800),
@@ -67,66 +55,36 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
   }
 
   void _fallStatus(AnimationStatus status) {
-    if (status != AnimationStatus.completed ||
-        _holding ||
-        _waiting ||
-        _lives == 0) {
+    if (status != AnimationStatus.completed || _waiting || _lives == 0) {
       return;
     }
     _missTimer?.cancel();
     _missTimer = Timer(const Duration(milliseconds: 900), () {
-      if (mounted && !_holding && !_waiting) _bad();
+      if (mounted && !_waiting) _bad();
     });
   }
 
   void _pressPitch(int index) {
-    if (_holding || _waiting || _lives == 0) return;
+    if (_waiting || _lives == 0) return;
     _missTimer?.cancel();
     final entryDifference = (1 - _fallController.value).abs();
     if (index != _pitchIndex || entryDifference > .28) {
-      _bad();
+      _bad(index);
       return;
     }
     _fallController.stop();
-    _holdWatch
-      ..reset()
-      ..start();
-    setState(() {
-      _holding = true;
-      _pressedPitch = index;
-      _perfectEntry = entryDifference <= .1;
-      _feedback = '';
-    });
-  }
-
-  void _releasePitch(int index) {
-    if (!_holding || _pressedPitch != index) return;
-    _holdWatch.stop();
-    final error = (_holdWatch.elapsedMilliseconds - _targetMilliseconds).abs();
-    final perfectTolerance = math.max(
-      (_targetMilliseconds * .12).round(),
-      _figure.beats <= .5 ? 90 : 0,
-    );
-    final goodTolerance = math.max(
-      (_targetMilliseconds * .25).round(),
-      _figure.beats <= .5 ? 145 : 0,
-    );
-    if (_perfectEntry && error <= perfectTolerance) {
+    _pressedPitch = index;
+    if (entryDifference <= .1) {
       _result('PERFECTO', const Color(0xFF65F1CC), 120);
-    } else if (error <= goodTolerance) {
-      _result('BIEN', const Color(0xFFFFD166), 70);
     } else {
-      _bad();
+      _result('BIEN', const Color(0xFFFFD166), 70);
     }
   }
 
   void _result(String label, Color color, int points) {
-    _holdWatch.stop();
     _missTimer?.cancel();
     _streak++;
     setState(() {
-      _holding = false;
-      _pressedPitch = null;
       _waiting = true;
       _score += points + (_streak * 10);
       _feedback = label;
@@ -135,14 +93,12 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
     _nextTimer = Timer(const Duration(milliseconds: 900), _nextRound);
   }
 
-  void _bad() {
+  void _bad([int? pressedPitch]) {
     if (_waiting || _lives == 0) return;
-    _holdWatch.stop();
     _missTimer?.cancel();
     _fallController.stop();
     setState(() {
-      _holding = false;
-      _pressedPitch = null;
+      _pressedPitch = pressedPitch;
       _waiting = true;
       _streak = 0;
       _lives--;
@@ -156,17 +112,16 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
 
   void _nextRound() {
     if (!mounted) return;
-    final oldFigure = _figure;
-    final oldPitch = _pitchIndex;
+    final oldPosition = _positionIndex;
     do {
-      _figure = _figures[_random.nextInt(_figures.length)];
-      _pitchIndex = _random.nextInt(_pitches.length);
-    } while (_figure == oldFigure && _pitchIndex == oldPitch);
+      _positionIndex = _random.nextInt(_staffPositions.length);
+    } while (_positionIndex == oldPosition);
     _fallController
       ..reset()
       ..forward();
     setState(() {
       _round++;
+      _pressedPitch = null;
       _waiting = false;
       _feedback = '';
       _feedbackColor = Colors.transparent;
@@ -176,11 +131,7 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
   void _restart() {
     _nextTimer?.cancel();
     _missTimer?.cancel();
-    _holdWatch
-      ..stop()
-      ..reset();
-    _figure = _figures[_random.nextInt(_figures.length)];
-    _pitchIndex = _random.nextInt(_pitches.length);
+    _positionIndex = _random.nextInt(_staffPositions.length);
     _fallController
       ..reset()
       ..forward();
@@ -190,7 +141,6 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
       _streak = 0;
       _lives = 3;
       _round = 1;
-      _holding = false;
       _waiting = false;
       _feedback = '';
       _feedbackColor = Colors.transparent;
@@ -202,16 +152,7 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
     _nextTimer?.cancel();
     _missTimer?.cancel();
     _fallController.dispose();
-    _holdWatch.stop();
     super.dispose();
-  }
-
-  String _beats(double value) {
-    if (value == 4) return '4 tiempos';
-    if (value == 2) return '2 tiempos';
-    if (value == 1) return '1 tiempo';
-    if (value == .5) return '½ tiempo';
-    return '¼ de tiempo';
   }
 
   @override
@@ -224,7 +165,7 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
             children: [
               Text('Pentagrama Balam',
                   style: TextStyle(fontWeight: FontWeight.w800)),
-              Text('Identifica y sostén la nota',
+              Text('Etapa 1 · Identifica la nota negra',
                   style: TextStyle(fontSize: 12, color: Color(0xFFC8B5EE))),
             ],
           ),
@@ -252,9 +193,9 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              _pill(Icons.speed_rounded, '$_bpm BPM'),
-                              Text('${_figure.name} · ${_beats(_figure.beats)}',
-                                  style: const TextStyle(
+                              _pill(Icons.school_rounded, 'ETAPA 1'),
+                              const Text('Nota negra  ♩',
+                                  style: TextStyle(
                                       color: Color(0xFFD8C5F5),
                                       fontSize: 12,
                                       fontWeight: FontWeight.w700)),
@@ -322,7 +263,7 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
                   final top = start + ((end - start) * _fallController.value);
                   return Positioned(
                     left: staffLeft +
-                        _staffPitchX(_pitchIndex, staffWidth) -
+                        _staffPitchX(_positionIndex, staffWidth) -
                         (noteSize / 2),
                     top: top,
                     width: noteSize,
@@ -331,9 +272,7 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
                   );
                 },
                 child: _FallingNote(
-                  figure: _figure,
                   color: _pitches[_pitchIndex].color,
-                  holding: _holding,
                 ),
               ),
               Positioned(
@@ -384,8 +323,6 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
                   child: Listener(
                     behavior: HitTestBehavior.opaque,
                     onPointerDown: (_) => _pressPitch(i),
-                    onPointerUp: (_) => _releasePitch(i),
-                    onPointerCancel: (_) => _releasePitch(i),
                     child: Center(
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 100),
@@ -435,11 +372,11 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
         },
       );
 
-  double _staffPitchX(int index, double width) {
+  double _staffPitchX(int positionFromRight, double width) {
     const margin = 32.0;
     final usableWidth = math.max(80.0, width - (margin * 2));
     final lineSpacing = usableWidth / 4;
-    return margin + (index * lineSpacing / 2);
+    return width - margin - (positionFromRight * lineSpacing / 2);
   }
 
   Widget _feedbackBadge() => AnimatedSwitcher(
@@ -550,39 +487,27 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
                         TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
                 const SizedBox(height: 8),
                 Text(
-                  'El pentagrama permanece fijo. Cuando la figura llegue a la zona verde, mantén presionado su círculo de la izquierda durante el valor indicado.',
+                  'El pentagrama permanece fijo. Cuando la nota negra llegue a la zona verde, toca su nombre en los círculos de la izquierda.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.white.withValues(alpha: .7)),
                 ),
                 const SizedBox(height: 14),
-                for (final figure in _figures)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(children: [
-                      SizedBox(
-                          width: 38,
-                          child: Text(figure.symbol,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(fontSize: 25))),
-                      Expanded(child: Text(figure.name)),
-                      Text(_beats(figure.beats),
-                          style: const TextStyle(
-                              color: Color(0xFF7DE8D8),
-                              fontWeight: FontWeight.w700)),
-                    ]),
-                  ),
+                const Text(
+                  'De derecha a izquierda:',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'MI · FA · SOL · LA · SI · DO · RE · MI · FA',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: Color(0xFF7DE8D8), fontWeight: FontWeight.w800),
+                ),
               ],
             ),
           ),
         ),
       );
-}
-
-class _RhythmFigure {
-  const _RhythmFigure(this.name, this.symbol, this.beats);
-  final String name;
-  final String symbol;
-  final double beats;
 }
 
 class _Pitch {
@@ -593,14 +518,10 @@ class _Pitch {
 
 class _FallingNote extends StatelessWidget {
   const _FallingNote({
-    required this.figure,
     required this.color,
-    required this.holding,
   });
 
-  final _RhythmFigure figure;
   final Color color;
-  final bool holding;
 
   @override
   Widget build(BuildContext context) => AnimatedContainer(
@@ -616,9 +537,9 @@ class _FallingNote extends StatelessWidget {
               Border.all(color: Colors.white.withValues(alpha: .85), width: 2),
           boxShadow: [
             BoxShadow(
-              color: color.withValues(alpha: holding ? .7 : .38),
-              blurRadius: holding ? 28 : 15,
-              spreadRadius: holding ? 4 : 1,
+              color: color.withValues(alpha: .5),
+              blurRadius: 20,
+              spreadRadius: 2,
             ),
           ],
         ),
@@ -627,9 +548,9 @@ class _FallingNote extends StatelessWidget {
           fit: BoxFit.scaleDown,
           child: Padding(
             padding: const EdgeInsets.all(8),
-            child: Text(
-              figure.symbol,
-              style: const TextStyle(
+            child: const Text(
+              '♩',
+              style: TextStyle(
                 color: Color(0xFF170C2C),
                 fontSize: 38,
                 fontWeight: FontWeight.w900,
