@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -13,7 +13,7 @@ class RegisterRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=1, max_length=128)
 
 
 class TokenResponse(BaseModel):
@@ -78,3 +78,18 @@ class MusicianProfileResponse(MusicianProfileUpsert):
     media: list[MediaResponse] = Field(default_factory=list)
     avatar_preset: str = "jaguar_guitar"
     avatar_color: str = "#8B5CF6"
+
+
+class BusyDateUpdate(BaseModel):
+    busy: bool
+
+
+class BusyDateResponse(BaseModel):
+    date: date
+    busy: bool
+
+
+class AvailabilityResponse(BaseModel):
+    date: date
+    available: bool
+    message: str

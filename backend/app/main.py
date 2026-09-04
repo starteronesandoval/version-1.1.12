@@ -1,5 +1,6 @@
 import json
 import shutil
+from datetime import date
 from pathlib import Path
 from uuid import uuid4
 
@@ -13,10 +14,12 @@ from .auth import create_token, current_user, hash_password, require_role, verif
 from .config import settings
 from .database import Base, engine, get_db
 from .models import (AvatarChoice, ClientAvatar, ClientProfile, Media, MediaType,
-                     MusicianProfile, User, UserRole)
-from .schemas import (AvatarChoiceUpdate, ClientProfileResponse, ClientProfileUpsert, LoginRequest,
-                      MusicianProfileResponse, MusicianProfileUpsert,
-                      RegisterRequest, TokenResponse, UserResponse)
+                     MusicianBusyDate, MusicianProfile, User, UserRole)
+from .schemas import (AvailabilityResponse, AvatarChoiceUpdate,
+                      BusyDateResponse, BusyDateUpdate, ClientProfileResponse,
+                      ClientProfileUpsert, LoginRequest, MusicianProfileResponse,
+                      MusicianProfileUpsert, RegisterRequest, TokenResponse,
+                      UserResponse)
 
 Base.metadata.create_all(bind=engine)
 settings.upload_dir.mkdir(parents=True, exist_ok=True)
@@ -85,7 +88,7 @@ def health():
 
 @app.post("/api/auth/register", response_model=TokenResponse, status_code=201)
 def register(data: RegisterRequest, db: Session = Depends(get_db)):
-    email = data.email.lower()
+    email = str(data.email).strip().lower()
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(409, "El correo ya está registrado")
     user = User(email=email, password_hash=hash_password(data.password), role=data.role)
@@ -95,8 +98,9 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
 
 @app.post("/api/auth/login", response_model=TokenResponse)
 def login(data: LoginRequest, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(User.email == data.email.lower()))
-    if not user or not verify_password(data.password, user.password_hash):
+    email = str(data.email).strip().lower()
+    user = db.scalar(select(User).where(User.email == email))
+    if not user or not user.is_active or not verify_password(data.password, user.password_hash):
         raise HTTPException(401, "Correo o contraseña incorrectos")
     return TokenResponse(access_token=create_token(user))
 
@@ -190,6 +194,60 @@ def get_musician(user: User = Depends(require_role(UserRole.musician)), db: Sess
     return musician_out(profile)
 
 
+@app.get("/api/musicians/me/busy-dates", response_model=list[BusyDateResponse])
+def get_my_busy_dates(
+    user: User = Depends(require_role(UserRole.musician)),
+    db: Session = Depends(get_db),
+):
+    profile = db.scalar(
+        select(MusicianProfile).where(MusicianProfile.user_id == user.id)
+    )
+    if not profile:
+        raise HTTPException(409, "Crea primero el perfil de la agrupación")
+    dates = db.scalars(
+        select(MusicianBusyDate)
+        .where(MusicianBusyDate.musician_id == profile.id)
+        .order_by(MusicianBusyDate.busy_date)
+    ).all()
+    return [BusyDateResponse(date=item.busy_date, busy=True) for item in dates]
+
+
+@app.put(
+    "/api/musicians/me/busy-dates/{selected_date}",
+    response_model=BusyDateResponse,
+)
+def set_my_busy_date(
+    selected_date: date,
+    data: BusyDateUpdate,
+    user: User = Depends(require_role(UserRole.musician)),
+    db: Session = Depends(get_db),
+):
+    if selected_date < date.today():
+        raise HTTPException(422, "No puedes modificar fechas anteriores")
+    profile = db.scalar(
+        select(MusicianProfile).where(MusicianProfile.user_id == user.id)
+    )
+    if not profile:
+        raise HTTPException(409, "Crea primero el perfil de la agrupación")
+    existing = db.scalar(
+        select(MusicianBusyDate).where(
+            MusicianBusyDate.musician_id == profile.id,
+            MusicianBusyDate.busy_date == selected_date,
+        )
+    )
+    if data.busy and not existing:
+        db.add(
+            MusicianBusyDate(
+                musician_id=profile.id,
+                busy_date=selected_date,
+            )
+        )
+    elif not data.busy and existing:
+        db.delete(existing)
+    db.commit()
+    return BusyDateResponse(date=selected_date, busy=data.busy)
+
+
 @app.get("/api/musicians", response_model=list[MusicianProfileResponse])
 def search_musicians(q: str = "", group_type: str | None = None, musical_style: str | None = None,
                      max_hourly_rate: float | None = Query(None, ge=0), includes_sound: bool | None = None,
@@ -209,6 +267,38 @@ def musician_detail(musician_id: int, db: Session = Depends(get_db)):
     profile = db.scalar(musician_profiles().where(MusicianProfile.id == musician_id))
     if not profile: raise HTTPException(404, "Agrupación no encontrada")
     return musician_out(profile)
+
+
+@app.get(
+    "/api/musicians/{musician_id}/availability",
+    response_model=AvailabilityResponse,
+)
+def musician_availability(
+    musician_id: int,
+    selected_date: date = Query(alias="date"),
+    user: User = Depends(require_role(UserRole.client)),
+    db: Session = Depends(get_db),
+):
+    profile = db.get(MusicianProfile, musician_id)
+    if not profile:
+        raise HTTPException(404, "Agrupación no encontrada")
+    busy = db.scalar(
+        select(MusicianBusyDate).where(
+            MusicianBusyDate.musician_id == musician_id,
+            MusicianBusyDate.busy_date == selected_date,
+        )
+    )
+    available = busy is None
+    message = (
+        "La agrupación está disponible en esta fecha."
+        if available
+        else "Lo sentimos, el grupo ya tiene compromiso ese día."
+    )
+    return AvailabilityResponse(
+        date=selected_date,
+        available=available,
+        message=message,
+    )
 
 
 @app.post("/api/musicians/me/media", status_code=201)

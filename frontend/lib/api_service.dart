@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
@@ -13,9 +14,16 @@ class ApiException implements Exception {
 }
 
 class ApiService {
-  ApiService({this.baseUrl = 'http://10.0.2.2:8000'});
+  ApiService({String? baseUrl}) : baseUrl = baseUrl ?? _defaultBaseUrl();
   final String baseUrl;
   final _storage = const FlutterSecureStorage();
+
+  static String _defaultBaseUrl() {
+    if (kIsWeb) return 'http://127.0.0.1:8000';
+    return defaultTargetPlatform == TargetPlatform.android
+        ? 'http://10.0.2.2:8000'
+        : 'http://127.0.0.1:8000';
+  }
 
   String? mediaUrl(dynamic path) {
     if (path == null || path.toString().isEmpty) return null;
@@ -35,14 +43,26 @@ class ApiService {
   }
 
   dynamic _decode(http.Response response) {
-    final body = response.body.isEmpty
-        ? null
-        : jsonDecode(utf8.decode(response.bodyBytes));
-    if (response.statusCode < 200 || response.statusCode >= 300) {
+    dynamic body;
+    try {
+      body = response.body.isEmpty
+          ? null
+          : jsonDecode(utf8.decode(response.bodyBytes));
+    } on FormatException {
       throw ApiException(
-        body is Map
-            ? (body['detail']?.toString() ?? 'Ocurrió un error')
-            : 'Ocurrió un error',
+        'El servidor devolvió una respuesta no válida',
+        response.statusCode,
+      );
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final detail = body is Map ? body['detail'] : null;
+      throw ApiException(
+        detail is List
+            ? detail
+                .map((item) => item is Map ? item['msg'] : item)
+                .where((item) => item != null)
+                .join('\n')
+            : (detail?.toString() ?? 'Ocurrió un error'),
         response.statusCode,
       );
     }
@@ -76,8 +96,14 @@ class ApiService {
     );
     final body = _decode(response) as Map<String, dynamic>;
     await _storage.write(key: 'token', value: body['access_token'] as String);
-    final me = await get('/api/users/me') as Map<String, dynamic>;
-    await _storage.write(key: 'role', value: me['role'] as String);
+    try {
+      final me = await get('/api/users/me') as Map<String, dynamic>;
+      await _storage.write(key: 'role', value: me['role'] as String);
+    } catch (_) {
+      await _storage.delete(key: 'token');
+      await _storage.delete(key: 'role');
+      rethrow;
+    }
   }
 
   Future<void> logout() => _storage.deleteAll();

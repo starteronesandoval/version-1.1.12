@@ -21,7 +21,12 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    return password_hash.verify(password, hashed)
+    # A damaged or legacy value in the database must be treated as invalid
+    # credentials instead of turning the login endpoint into a 500 response.
+    try:
+        return password_hash.verify(password, hashed)
+    except Exception:
+        return False
 
 
 def create_token(user: User) -> str:
@@ -48,4 +53,3 @@ def require_role(role: UserRole):
             raise HTTPException(status_code=403, detail="Este recurso no corresponde a tu modalidad")
         return user
     return check
-

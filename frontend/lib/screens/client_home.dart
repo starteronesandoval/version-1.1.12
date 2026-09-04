@@ -276,10 +276,156 @@ class _ClientHomeState extends State<ClientHome> {
               FilledButton.icon(
                   style: FilledButton.styleFrom(
                       minimumSize: const Size.fromHeight(54)),
-                  onPressed: () => Navigator.pop(sheetContext),
+                  onPressed: () {
+                    Navigator.pop(sheetContext);
+                    _availabilitySheet(band);
+                  },
                   icon: const Icon(Icons.calendar_month),
-                  label: const Text('Solicitar disponibilidad')),
+                  label: const Text('Contratar / consultar fecha')),
             ]),
+      ),
+    );
+  }
+
+  String _dateKey(DateTime value) => '${value.year.toString().padLeft(4, '0')}-'
+      '${value.month.toString().padLeft(2, '0')}-'
+      '${value.day.toString().padLeft(2, '0')}';
+
+  String _formatDate(DateTime value) =>
+      '${value.day.toString().padLeft(2, '0')}/'
+      '${value.month.toString().padLeft(2, '0')}/${value.year}';
+
+  Future<void> _availabilitySheet(Map<String, dynamic> band) async {
+    DateTime? selectedDate;
+    Map<String, dynamic>? availability;
+    var checking = false;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1C1235),
+      showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (_, setSheetState) {
+          final available = availability?['available'] as bool?;
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(22, 4, 22, 28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Icon(Icons.calendar_month,
+                      size: 46, color: Color(0xFFBFA1FF)),
+                  const SizedBox(height: 12),
+                  Text('Consulta antes de contratar',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(sheetContext)
+                          .textTheme
+                          .headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Elige la fecha de tu evento para consultar a ${band['group_name']}.',
+                    textAlign: TextAlign.center,
+                    style:
+                        TextStyle(color: Colors.white.withValues(alpha: .66)),
+                  ),
+                  const SizedBox(height: 20),
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                        minimumSize: const Size.fromHeight(52)),
+                    onPressed: checking
+                        ? null
+                        : () async {
+                            final selected = await showDatePicker(
+                              context: sheetContext,
+                              initialDate: selectedDate ?? today,
+                              firstDate: today,
+                              lastDate: today.add(const Duration(days: 730)),
+                              helpText: 'Fecha del evento',
+                              cancelText: 'Cancelar',
+                              confirmText: 'Consultar',
+                            );
+                            if (selected == null || !sheetContext.mounted) {
+                              return;
+                            }
+                            setSheetState(() {
+                              selectedDate = selected;
+                              availability = null;
+                              checking = true;
+                            });
+                            try {
+                              final response = await widget.api.get(
+                                      '/api/musicians/${band['id']}/availability?date=${_dateKey(selected)}')
+                                  as Map<String, dynamic>;
+                              if (!sheetContext.mounted) return;
+                              setSheetState(() {
+                                availability = response;
+                                checking = false;
+                              });
+                            } catch (error) {
+                              if (!sheetContext.mounted) return;
+                              setSheetState(() => checking = false);
+                              ScaffoldMessenger.of(sheetContext).showSnackBar(
+                                  SnackBar(content: Text(error.toString())));
+                            }
+                          },
+                    icon: const Icon(Icons.calendar_month),
+                    label: Text(selectedDate == null
+                        ? 'Seleccionar fecha'
+                        : _formatDate(selectedDate!)),
+                  ),
+                  if (checking) ...[
+                    const SizedBox(height: 18),
+                    const Center(child: CircularProgressIndicator()),
+                  ],
+                  if (available != null) ...[
+                    const SizedBox(height: 18),
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 250),
+                      padding: const EdgeInsets.all(18),
+                      decoration: BoxDecoration(
+                        color: (available
+                                ? const Color(0xFF27AE86)
+                                : const Color(0xFFD84B5C))
+                            .withValues(alpha: .18),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: available
+                              ? const Color(0xFF68DDCD)
+                              : const Color(0xFFFF7D8C),
+                        ),
+                      ),
+                      child: Column(children: [
+                        Icon(
+                          available ? Icons.event_available : Icons.event_busy,
+                          size: 42,
+                          color: available
+                              ? const Color(0xFF68DDCD)
+                              : const Color(0xFFFF7D8C),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          available ? 'Fecha disponible' : 'Fecha ocupada',
+                          style: const TextStyle(
+                              fontSize: 19, fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          availability!['message'].toString(),
+                          textAlign: TextAlign.center,
+                        ),
+                      ]),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }

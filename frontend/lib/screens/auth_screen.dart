@@ -21,6 +21,12 @@ class _AuthScreenState extends State<AuthScreen> {
   bool busy = false;
 
   Future<void> submit() async {
+    if (email.text.trim().isEmpty || password.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Escribe tu correo y contraseña')),
+      );
+      return;
+    }
     setState(() => busy = true);
     try {
       if (registerMode) {
@@ -30,10 +36,20 @@ class _AuthScreenState extends State<AuthScreen> {
         role = await widget.api.role ?? 'client';
       }
       widget.onSignedIn(role);
-    } catch (error) {
+    } on ApiException catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(error.toString())));
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No se pudo conectar con Balam. Verifica que el servidor esté encendido.',
+            ),
+          ),
+        );
       }
     } finally {
       if (mounted) setState(() => busy = false);

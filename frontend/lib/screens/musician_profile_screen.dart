@@ -39,6 +39,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
   bool busy = false;
   bool loading = true;
   bool editing = false;
+  final Set<String> busyDates = {};
 
   @override
   void initState() {
@@ -53,6 +54,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
       _fill(data);
       profile = data;
       editing = false;
+      await _loadBusyDates();
     } on ApiException catch (error) {
       if (error.statusCode == 404) {
         editing = true;
@@ -63,6 +65,147 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
     } finally {
       if (mounted) setState(() => loading = false);
     }
+  }
+
+  Future<void> _loadBusyDates() async {
+    final response =
+        await widget.api.get('/api/musicians/me/busy-dates') as List<dynamic>;
+    busyDates
+      ..clear()
+      ..addAll(response.map((item) => item['date'].toString()));
+  }
+
+  String _dateKey(DateTime value) => '${value.year.toString().padLeft(4, '0')}-'
+      '${value.month.toString().padLeft(2, '0')}-'
+      '${value.day.toString().padLeft(2, '0')}';
+
+  String _formatDate(String value) {
+    final parsed = DateTime.parse(value);
+    return '${parsed.day.toString().padLeft(2, '0')}/'
+        '${parsed.month.toString().padLeft(2, '0')}/${parsed.year}';
+  }
+
+  Future<void> _openBusyCalendar() async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    var selected = today;
+    var saving = false;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1C1235),
+      showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (_, setSheetState) {
+          final key = _dateKey(selected);
+          final isBusy = busyDates.contains(key);
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 4, 18, 24),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text('Agenda de la agrupación',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            fontSize: 22, fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Selecciona un día para marcarlo como ocupado o volver a liberarlo.',
+                      textAlign: TextAlign.center,
+                      style:
+                          TextStyle(color: Colors.white.withValues(alpha: .65)),
+                    ),
+                    const SizedBox(height: 14),
+                    Theme(
+                      data: Theme.of(context).copyWith(
+                        colorScheme: Theme.of(context).colorScheme.copyWith(
+                              primary: isBusy
+                                  ? const Color(0xFFE65A69)
+                                  : const Color(0xFF55D6C2),
+                            ),
+                      ),
+                      child: CalendarDatePicker(
+                        initialDate: selected,
+                        firstDate: today,
+                        lastDate: today.add(const Duration(days: 730)),
+                        onDateChanged: (value) =>
+                            setSheetState(() => selected = value),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: (isBusy
+                                ? const Color(0xFFE65A69)
+                                : const Color(0xFF55D6C2))
+                            .withValues(alpha: .15),
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: Row(children: [
+                        Icon(isBusy ? Icons.event_busy : Icons.event_available,
+                            color: isBusy
+                                ? const Color(0xFFFF8A96)
+                                : const Color(0xFF68DDCD)),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(isBusy
+                              ? 'Este día está marcado como ocupado.'
+                              : 'Este día está libre.'),
+                        ),
+                      ]),
+                    ),
+                    const SizedBox(height: 14),
+                    FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(52),
+                          backgroundColor: isBusy
+                              ? const Color(0xFF3D8E80)
+                              : const Color(0xFFB53F51)),
+                      onPressed: saving
+                          ? null
+                          : () async {
+                              setSheetState(() => saving = true);
+                              try {
+                                await widget.api.put(
+                                    '/api/musicians/me/busy-dates/$key',
+                                    {'busy': !isBusy});
+                                if (!sheetContext.mounted) return;
+                                if (isBusy) {
+                                  busyDates.remove(key);
+                                } else {
+                                  busyDates.add(key);
+                                }
+                                if (mounted) setState(() {});
+                                setSheetState(() => saving = false);
+                              } catch (error) {
+                                if (!sheetContext.mounted) return;
+                                setSheetState(() => saving = false);
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                          content: Text(error.toString())));
+                                }
+                              }
+                            },
+                      icon: Icon(
+                          isBusy ? Icons.event_available : Icons.event_busy),
+                      label: Text(saving
+                          ? 'Guardando…'
+                          : isBusy
+                              ? 'Liberar esta fecha'
+                              : 'Marcar como ocupado'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   void _fill(Map<String, dynamic> data) {
@@ -298,6 +441,53 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
               Chip(label: Text(brand)),
           ]),
         ])),
+        const SizedBox(height: 16),
+        GlassCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                const Icon(Icons.calendar_month, color: Color(0xFFBFA1FF)),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text('Mi calendario',
+                      style:
+                          TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                ),
+                Text('${busyDates.length} ocupados',
+                    style:
+                        TextStyle(color: Colors.white.withValues(alpha: .58))),
+              ]),
+              const SizedBox(height: 8),
+              Text(
+                  'Estas fechas sólo se revelan cuando un cliente consulta un día.',
+                  style: TextStyle(color: Colors.white.withValues(alpha: .66))),
+              if (busyDates.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 7,
+                  runSpacing: 7,
+                  children: (busyDates.toList()..sort())
+                      .map((day) => Chip(
+                            avatar: const Icon(Icons.event_busy, size: 16),
+                            label: Text(_formatDate(day)),
+                            backgroundColor:
+                                const Color(0xFFE65A69).withValues(alpha: .18),
+                          ))
+                      .toList(),
+                ),
+              ],
+              const SizedBox(height: 12),
+              FilledButton.tonalIcon(
+                style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(48)),
+                onPressed: _openBusyCalendar,
+                icon: const Icon(Icons.edit_calendar),
+                label: const Text('Administrar fechas'),
+              ),
+            ],
+          ),
+        ),
         const SizedBox(height: 20),
         _sectionTitle(
             'Momentos', '${photos.length}/5 fotos', () => pick('photo', 5)),

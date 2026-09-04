@@ -1,7 +1,7 @@
 import enum
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Enum, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -60,6 +60,20 @@ class MusicianProfile(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     user: Mapped[User] = relationship(back_populates="musician_profile")
     media: Mapped[list["Media"]] = relationship(back_populates="musician", cascade="all, delete-orphan")
+    busy_dates: Mapped[list["MusicianBusyDate"]] = relationship(
+        back_populates="musician", cascade="all, delete-orphan"
+    )
+
+
+class MusicianBusyDate(Base):
+    __tablename__ = "musician_busy_dates"
+    __table_args__ = (UniqueConstraint("musician_id", "busy_date"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    musician_id: Mapped[int] = mapped_column(
+        ForeignKey("musician_profiles.id"), index=True
+    )
+    busy_date: Mapped[date] = mapped_column(Date, index=True)
+    musician: Mapped[MusicianProfile] = relationship(back_populates="busy_dates")
 
 
 class ClientProfile(Base):
