@@ -1,6 +1,6 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 from .models import MediaType, UserRole
 
@@ -93,3 +93,31 @@ class AvailabilityResponse(BaseModel):
     date: date
     available: bool
     message: str
+
+
+class BookingCreate(BaseModel):
+    musician_id: int = Field(gt=0)
+    event_date: date
+    venue: str = Field(min_length=3, max_length=300)
+    start_time: time
+    end_time: time
+
+    @model_validator(mode="after")
+    def validate_schedule(self):
+        if self.end_time <= self.start_time:
+            raise ValueError("El horario final debe ser posterior al horario de inicio")
+        return self
+
+
+class BookingResponse(BaseModel):
+    id: int
+    musician_id: int
+    group_name: str
+    client_id: int
+    client_name: str
+    client_email: EmailStr
+    event_date: date
+    venue: str
+    start_time: time
+    end_time: time
+    created_at: datetime

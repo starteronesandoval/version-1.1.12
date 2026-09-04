@@ -40,6 +40,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
   bool loading = true;
   bool editing = false;
   final Set<String> busyDates = {};
+  List<dynamic> bookings = [];
 
   @override
   void initState() {
@@ -54,7 +55,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
       _fill(data);
       profile = data;
       editing = false;
-      await _loadBusyDates();
+      await Future.wait([_loadBusyDates(), _loadBookings()]);
     } on ApiException catch (error) {
       if (error.statusCode == 404) {
         editing = true;
@@ -75,6 +76,11 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
       ..addAll(response.map((item) => item['date'].toString()));
   }
 
+  Future<void> _loadBookings() async {
+    bookings =
+        await widget.api.get('/api/musicians/me/bookings') as List<dynamic>;
+  }
+
   String _dateKey(DateTime value) => '${value.year.toString().padLeft(4, '0')}-'
       '${value.month.toString().padLeft(2, '0')}-'
       '${value.day.toString().padLeft(2, '0')}';
@@ -83,6 +89,11 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
     final parsed = DateTime.parse(value);
     return '${parsed.day.toString().padLeft(2, '0')}/'
         '${parsed.month.toString().padLeft(2, '0')}/${parsed.year}';
+  }
+
+  String _formatTime(dynamic value) {
+    final text = value.toString();
+    return text.length >= 5 ? text.substring(0, 5) : text;
   }
 
   Future<void> _openBusyCalendar() async {
@@ -441,6 +452,77 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
               Chip(label: Text(brand)),
           ]),
         ])),
+        if (bookings.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          GlassCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(children: [
+                  CircleAvatar(
+                    backgroundColor: Color(0x3335D8C6),
+                    child: Icon(Icons.notifications_active,
+                        color: Color(0xFF68DDCD)),
+                  ),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      '¡Felicidades! Has vendido una fecha. Revisa los datos.',
+                      style:
+                          TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: 14),
+                for (final item in bookings.cast<Map<String, dynamic>>()) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: .07),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                          color: Colors.white.withValues(alpha: .10)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(_formatDate(item['event_date'].toString()),
+                            style: const TextStyle(
+                                color: Color(0xFF68DDCD),
+                                fontWeight: FontWeight.w800,
+                                fontSize: 17)),
+                        const SizedBox(height: 8),
+                        Row(children: [
+                          const Icon(Icons.location_on_outlined, size: 19),
+                          const SizedBox(width: 7),
+                          Expanded(child: Text(item['venue'].toString())),
+                        ]),
+                        const SizedBox(height: 7),
+                        Row(children: [
+                          const Icon(Icons.schedule, size: 19),
+                          const SizedBox(width: 7),
+                          Text(
+                              '${_formatTime(item['start_time'])} – ${_formatTime(item['end_time'])}'),
+                        ]),
+                        const SizedBox(height: 7),
+                        Row(children: [
+                          const Icon(Icons.person_outline, size: 19),
+                          const SizedBox(width: 7),
+                          Expanded(
+                            child: Text(
+                                '${item['client_name']} · ${item['client_email']}'),
+                          ),
+                        ]),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 9),
+                ],
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: 16),
         GlassCard(
           child: Column(

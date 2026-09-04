@@ -295,10 +295,20 @@ class _ClientHomeState extends State<ClientHome> {
       '${value.day.toString().padLeft(2, '0')}/'
       '${value.month.toString().padLeft(2, '0')}/${value.year}';
 
+  String _apiTime(TimeOfDay value) =>
+      '${value.hour.toString().padLeft(2, '0')}:'
+      '${value.minute.toString().padLeft(2, '0')}';
+
   Future<void> _availabilitySheet(Map<String, dynamic> band) async {
     DateTime? selectedDate;
     Map<String, dynamic>? availability;
+    Map<String, dynamic>? bookingResult;
+    final venue = TextEditingController();
+    TimeOfDay? startTime;
+    TimeOfDay? endTime;
     var checking = false;
+    var booking = false;
+    var showContractForm = false;
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
 
@@ -312,122 +322,312 @@ class _ClientHomeState extends State<ClientHome> {
           final available = availability?['available'] as bool?;
           return SafeArea(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(22, 4, 22, 28),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Icon(Icons.calendar_month,
-                      size: 46, color: Color(0xFFBFA1FF)),
-                  const SizedBox(height: 12),
-                  Text('Consulta antes de contratar',
+              padding: EdgeInsets.fromLTRB(
+                22,
+                4,
+                22,
+                MediaQuery.viewInsetsOf(sheetContext).bottom + 28,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Icon(Icons.calendar_month,
+                        size: 46, color: Color(0xFFBFA1FF)),
+                    const SizedBox(height: 12),
+                    Text('Consulta antes de contratar',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(sheetContext)
+                            .textTheme
+                            .headlineSmall
+                            ?.copyWith(fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Elige la fecha de tu evento para consultar a ${band['group_name']}.',
                       textAlign: TextAlign.center,
-                      style: Theme.of(sheetContext)
-                          .textTheme
-                          .headlineSmall
-                          ?.copyWith(fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Elige la fecha de tu evento para consultar a ${band['group_name']}.',
-                    textAlign: TextAlign.center,
-                    style:
-                        TextStyle(color: Colors.white.withValues(alpha: .66)),
-                  ),
-                  const SizedBox(height: 20),
-                  OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                        minimumSize: const Size.fromHeight(52)),
-                    onPressed: checking
-                        ? null
-                        : () async {
-                            final selected = await showDatePicker(
-                              context: sheetContext,
-                              initialDate: selectedDate ?? today,
-                              firstDate: today,
-                              lastDate: today.add(const Duration(days: 730)),
-                              helpText: 'Fecha del evento',
-                              cancelText: 'Cancelar',
-                              confirmText: 'Consultar',
-                            );
-                            if (selected == null || !sheetContext.mounted) {
-                              return;
-                            }
-                            setSheetState(() {
-                              selectedDate = selected;
-                              availability = null;
-                              checking = true;
-                            });
-                            try {
-                              final response = await widget.api.get(
-                                      '/api/musicians/${band['id']}/availability?date=${_dateKey(selected)}')
-                                  as Map<String, dynamic>;
-                              if (!sheetContext.mounted) return;
+                      style:
+                          TextStyle(color: Colors.white.withValues(alpha: .66)),
+                    ),
+                    const SizedBox(height: 20),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                          minimumSize: const Size.fromHeight(52)),
+                      onPressed: checking
+                          ? null
+                          : () async {
+                              final selected = await showDatePicker(
+                                context: sheetContext,
+                                initialDate: selectedDate ?? today,
+                                firstDate: today,
+                                lastDate: today.add(const Duration(days: 730)),
+                                helpText: 'Fecha del evento',
+                                cancelText: 'Cancelar',
+                                confirmText: 'Consultar',
+                              );
+                              if (selected == null || !sheetContext.mounted) {
+                                return;
+                              }
                               setSheetState(() {
-                                availability = response;
-                                checking = false;
+                                selectedDate = selected;
+                                availability = null;
+                                bookingResult = null;
+                                showContractForm = false;
+                                checking = true;
                               });
-                            } catch (error) {
-                              if (!sheetContext.mounted) return;
-                              setSheetState(() => checking = false);
-                              ScaffoldMessenger.of(sheetContext).showSnackBar(
-                                  SnackBar(content: Text(error.toString())));
-                            }
-                          },
-                    icon: const Icon(Icons.calendar_month),
-                    label: Text(selectedDate == null
-                        ? 'Seleccionar fecha'
-                        : _formatDate(selectedDate!)),
-                  ),
-                  if (checking) ...[
-                    const SizedBox(height: 18),
-                    const Center(child: CircularProgressIndicator()),
-                  ],
-                  if (available != null) ...[
-                    const SizedBox(height: 18),
-                    AnimatedContainer(
-                      duration: const Duration(milliseconds: 250),
-                      padding: const EdgeInsets.all(18),
-                      decoration: BoxDecoration(
-                        color: (available
-                                ? const Color(0xFF27AE86)
-                                : const Color(0xFFD84B5C))
-                            .withValues(alpha: .18),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: available
-                              ? const Color(0xFF68DDCD)
-                              : const Color(0xFFFF7D8C),
+                              try {
+                                final response = await widget.api.get(
+                                        '/api/musicians/${band['id']}/availability?date=${_dateKey(selected)}')
+                                    as Map<String, dynamic>;
+                                if (!sheetContext.mounted) return;
+                                setSheetState(() {
+                                  availability = response;
+                                  checking = false;
+                                });
+                              } catch (error) {
+                                if (!sheetContext.mounted) return;
+                                setSheetState(() => checking = false);
+                                ScaffoldMessenger.of(sheetContext).showSnackBar(
+                                    SnackBar(content: Text(error.toString())));
+                              }
+                            },
+                      icon: const Icon(Icons.calendar_month),
+                      label: Text(selectedDate == null
+                          ? 'Seleccionar fecha'
+                          : _formatDate(selectedDate!)),
+                    ),
+                    if (checking) ...[
+                      const SizedBox(height: 18),
+                      const Center(child: CircularProgressIndicator()),
+                    ],
+                    if (available != null) ...[
+                      const SizedBox(height: 18),
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 250),
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          color: (available
+                                  ? const Color(0xFF27AE86)
+                                  : const Color(0xFFD84B5C))
+                              .withValues(alpha: .18),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: available
+                                ? const Color(0xFF68DDCD)
+                                : const Color(0xFFFF7D8C),
+                          ),
+                        ),
+                        child: Column(children: [
+                          Icon(
+                            available
+                                ? Icons.event_available
+                                : Icons.event_busy,
+                            size: 42,
+                            color: available
+                                ? const Color(0xFF68DDCD)
+                                : const Color(0xFFFF7D8C),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            available ? 'Fecha disponible' : 'Fecha ocupada',
+                            style: const TextStyle(
+                                fontSize: 19, fontWeight: FontWeight.w800),
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            availability!['message'].toString(),
+                            textAlign: TextAlign.center,
+                          ),
+                        ]),
+                      ),
+                    ],
+                    if (available == true && !showContractForm) ...[
+                      const SizedBox(height: 14),
+                      FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(54),
+                          backgroundColor: const Color(0xFF27AE86),
+                        ),
+                        onPressed: () {
+                          if (clientProfile == null) {
+                            ScaffoldMessenger.of(sheetContext).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                    'Completa primero tu perfil de cliente.'),
+                              ),
+                            );
+                            return;
+                          }
+                          setSheetState(() => showContractForm = true);
+                        },
+                        icon: const Icon(Icons.handshake_outlined),
+                        label: const Text('Contratar esta fecha'),
+                      ),
+                    ],
+                    if (showContractForm && selectedDate != null) ...[
+                      const SizedBox(height: 18),
+                      const Text('Datos del evento',
+                          style: TextStyle(
+                              fontSize: 19, fontWeight: FontWeight.w800)),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        initialValue: _formatDate(selectedDate!),
+                        readOnly: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Fecha del contrato / evento',
+                          prefixIcon: Icon(Icons.event_available),
                         ),
                       ),
-                      child: Column(children: [
-                        Icon(
-                          available ? Icons.event_available : Icons.event_busy,
-                          size: 42,
-                          color: available
-                              ? const Color(0xFF68DDCD)
-                              : const Color(0xFFFF7D8C),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: venue,
+                        textCapitalization: TextCapitalization.sentences,
+                        decoration: const InputDecoration(
+                          labelText: 'Lugar del evento',
+                          hintText: 'Salón, domicilio o dirección',
+                          prefixIcon: Icon(Icons.location_on_outlined),
                         ),
-                        const SizedBox(height: 8),
-                        Text(
-                          available ? 'Fecha disponible' : 'Fecha ocupada',
-                          style: const TextStyle(
-                              fontSize: 19, fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () async {
+                              final value = await showTimePicker(
+                                context: sheetContext,
+                                initialTime: startTime ??
+                                    const TimeOfDay(hour: 18, minute: 0),
+                                helpText: 'Hora de inicio',
+                              );
+                              if (value != null && sheetContext.mounted) {
+                                setSheetState(() => startTime = value);
+                              }
+                            },
+                            icon: const Icon(Icons.play_circle_outline),
+                            label: Text(startTime == null
+                                ? 'Hora inicial'
+                                : MaterialLocalizations.of(sheetContext)
+                                    .formatTimeOfDay(startTime!)),
+                          ),
                         ),
-                        const SizedBox(height: 5),
-                        Text(
-                          availability!['message'].toString(),
-                          textAlign: TextAlign.center,
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () async {
+                              final value = await showTimePicker(
+                                context: sheetContext,
+                                initialTime: endTime ??
+                                    const TimeOfDay(hour: 23, minute: 0),
+                                helpText: 'Hora final',
+                              );
+                              if (value != null && sheetContext.mounted) {
+                                setSheetState(() => endTime = value);
+                              }
+                            },
+                            icon: const Icon(Icons.stop_circle_outlined),
+                            label: Text(endTime == null
+                                ? 'Hora final'
+                                : MaterialLocalizations.of(sheetContext)
+                                    .formatTimeOfDay(endTime!)),
+                          ),
                         ),
                       ]),
-                    ),
+                      const SizedBox(height: 14),
+                      FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                            minimumSize: const Size.fromHeight(54)),
+                        onPressed: booking
+                            ? null
+                            : () async {
+                                if (venue.text.trim().length < 3 ||
+                                    startTime == null ||
+                                    endTime == null) {
+                                  ScaffoldMessenger.of(sheetContext)
+                                      .showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                          'Completa el lugar y ambos horarios.'),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                setSheetState(() => booking = true);
+                                try {
+                                  final response = await widget.api.post(
+                                    '/api/bookings',
+                                    {
+                                      'musician_id': band['id'],
+                                      'event_date': _dateKey(selectedDate!),
+                                      'venue': venue.text.trim(),
+                                      'start_time': _apiTime(startTime!),
+                                      'end_time': _apiTime(endTime!),
+                                    },
+                                  ) as Map<String, dynamic>;
+                                  if (!sheetContext.mounted) return;
+                                  setSheetState(() {
+                                    bookingResult = response;
+                                    availability = null;
+                                    showContractForm = false;
+                                    booking = false;
+                                  });
+                                } on ApiException catch (error) {
+                                  if (!sheetContext.mounted) return;
+                                  if (error.statusCode == 409) {
+                                    setSheetState(() {
+                                      availability = {
+                                        'available': false,
+                                        'message': error.message,
+                                      };
+                                      showContractForm = false;
+                                      booking = false;
+                                    });
+                                  } else {
+                                    setSheetState(() => booking = false);
+                                    ScaffoldMessenger.of(sheetContext)
+                                        .showSnackBar(SnackBar(
+                                            content: Text(error.message)));
+                                  }
+                                }
+                              },
+                        icon: const Icon(Icons.check_circle_outline),
+                        label: Text(booking
+                            ? 'Confirmando…'
+                            : 'Confirmar contratación'),
+                      ),
+                    ],
+                    if (bookingResult != null) ...[
+                      const SizedBox(height: 18),
+                      Container(
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF27AE86).withValues(alpha: .18),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: const Color(0xFF68DDCD)),
+                        ),
+                        child: Column(children: [
+                          const Icon(Icons.celebration,
+                              size: 42, color: Color(0xFF68DDCD)),
+                          const SizedBox(height: 8),
+                          const Text('¡Fecha contratada!',
+                              style: TextStyle(
+                                  fontSize: 20, fontWeight: FontWeight.w800)),
+                          const SizedBox(height: 6),
+                          Text(
+                            '${band['group_name']} recibió los datos de tu evento.',
+                            textAlign: TextAlign.center,
+                          ),
+                        ]),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
           );
         },
       ),
     );
+    venue.dispose();
   }
 
   Widget _miniStat(String value, String label) => Column(children: [

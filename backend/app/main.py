@@ -8,18 +8,20 @@ from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from .auth import create_token, current_user, hash_password, require_role, verify_password
 from .config import settings
 from .database import Base, engine, get_db
-from .models import (AvatarChoice, ClientAvatar, ClientProfile, Media, MediaType,
-                     MusicianBusyDate, MusicianProfile, User, UserRole)
-from .schemas import (AvailabilityResponse, AvatarChoiceUpdate,
-                      BusyDateResponse, BusyDateUpdate, ClientProfileResponse,
-                      ClientProfileUpsert, LoginRequest, MusicianProfileResponse,
-                      MusicianProfileUpsert, RegisterRequest, TokenResponse,
-                      UserResponse)
+from .models import (AvatarChoice, Booking, ClientAvatar, ClientProfile, Media,
+                     MediaType, MusicianBusyDate, MusicianProfile, User,
+                     UserRole)
+from .schemas import (AvailabilityResponse, AvatarChoiceUpdate, BookingCreate,
+                      BookingResponse, BusyDateResponse, BusyDateUpdate,
+                      ClientProfileResponse, ClientProfileUpsert, LoginRequest,
+                      MusicianProfileResponse, MusicianProfileUpsert,
+                      RegisterRequest, TokenResponse, UserResponse)
 
 Base.metadata.create_all(bind=engine)
 settings.upload_dir.mkdir(parents=True, exist_ok=True)
@@ -78,6 +80,29 @@ def client_out(profile: ClientProfile) -> ClientProfileResponse:
         avatar_url=profile.avatar.url if profile.avatar else None,
         avatar_preset=choice.preset if choice else "jaguar_guitar",
         avatar_color=choice.color if choice else "#8B5CF6",
+    )
+
+
+def booking_query():
+    return select(Booking).options(
+        selectinload(Booking.client).selectinload(ClientProfile.user),
+        selectinload(Booking.musician),
+    )
+
+
+def booking_out(booking: Booking) -> BookingResponse:
+    return BookingResponse(
+        id=booking.id,
+        musician_id=booking.musician_id,
+        group_name=booking.musician.group_name,
+        client_id=booking.client_id,
+        client_name=booking.client.name,
+        client_email=booking.client.user.email,
+        event_date=booking.event_date,
+        venue=booking.venue,
+        start_time=booking.start_time,
+        end_time=booking.end_time,
+        created_at=booking.created_at,
     )
 
 
@@ -235,6 +260,15 @@ def set_my_busy_date(
             MusicianBusyDate.busy_date == selected_date,
         )
     )
+    if not data.busy:
+        booking = db.scalar(
+            select(Booking).where(
+                Booking.musician_id == profile.id,
+                Booking.event_date == selected_date,
+            )
+        )
+        if booking:
+            raise HTTPException(409, "No puedes liberar una fecha contratada")
     if data.busy and not existing:
         db.add(
             MusicianBusyDate(
@@ -299,6 +333,79 @@ def musician_availability(
         available=available,
         message=message,
     )
+
+
+@app.post("/api/bookings", response_model=BookingResponse, status_code=201)
+def create_booking(
+    data: BookingCreate,
+    user: User = Depends(require_role(UserRole.client)),
+    db: Session = Depends(get_db),
+):
+    if data.event_date < date.today():
+        raise HTTPException(422, "La fecha del evento debe ser futura")
+    client = db.scalar(
+        select(ClientProfile).where(ClientProfile.user_id == user.id)
+    )
+    if not client:
+        raise HTTPException(409, "Crea primero tu perfil de cliente")
+    musician = db.get(MusicianProfile, data.musician_id)
+    if not musician:
+        raise HTTPException(404, "Agrupación no encontrada")
+    busy = db.scalar(
+        select(MusicianBusyDate).where(
+            MusicianBusyDate.musician_id == musician.id,
+            MusicianBusyDate.busy_date == data.event_date,
+        )
+    )
+    if busy:
+        raise HTTPException(
+            409, "Lo sentimos, el grupo ya tiene compromiso ese día."
+        )
+    booking = Booking(
+        musician_id=musician.id,
+        client_id=client.id,
+        event_date=data.event_date,
+        venue=data.venue.strip(),
+        start_time=data.start_time,
+        end_time=data.end_time,
+    )
+    db.add(booking)
+    db.add(
+        MusicianBusyDate(
+            musician_id=musician.id,
+            busy_date=data.event_date,
+        )
+    )
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            409, "Lo sentimos, el grupo ya tiene compromiso ese día."
+        )
+    saved = db.scalar(booking_query().where(Booking.id == booking.id))
+    return booking_out(saved)
+
+
+@app.get(
+    "/api/musicians/me/bookings",
+    response_model=list[BookingResponse],
+)
+def get_my_bookings(
+    user: User = Depends(require_role(UserRole.musician)),
+    db: Session = Depends(get_db),
+):
+    profile = db.scalar(
+        select(MusicianProfile).where(MusicianProfile.user_id == user.id)
+    )
+    if not profile:
+        raise HTTPException(409, "Crea primero el perfil de la agrupación")
+    bookings = db.scalars(
+        booking_query()
+        .where(Booking.musician_id == profile.id)
+        .order_by(Booking.event_date, Booking.start_time)
+    ).all()
+    return [booking_out(item) for item in bookings]
 
 
 @app.post("/api/musicians/me/media", status_code=201)

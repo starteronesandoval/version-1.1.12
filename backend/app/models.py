@@ -1,7 +1,7 @@
 import enum
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Enum, Float, ForeignKey, Integer, String, Text, Time, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -63,6 +63,9 @@ class MusicianProfile(Base):
     busy_dates: Mapped[list["MusicianBusyDate"]] = relationship(
         back_populates="musician", cascade="all, delete-orphan"
     )
+    bookings: Mapped[list["Booking"]] = relationship(
+        back_populates="musician", cascade="all, delete-orphan"
+    )
 
 
 class MusicianBusyDate(Base):
@@ -87,6 +90,30 @@ class ClientProfile(Base):
     avatar: Mapped["ClientAvatar | None"] = relationship(
         back_populates="client", cascade="all, delete-orphan", uselist=False
     )
+    bookings: Mapped[list["Booking"]] = relationship(
+        back_populates="client", cascade="all, delete-orphan"
+    )
+
+
+class Booking(Base):
+    __tablename__ = "bookings"
+    __table_args__ = (UniqueConstraint("musician_id", "event_date"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    musician_id: Mapped[int] = mapped_column(
+        ForeignKey("musician_profiles.id"), index=True
+    )
+    client_id: Mapped[int] = mapped_column(
+        ForeignKey("client_profiles.id"), index=True
+    )
+    event_date: Mapped[date] = mapped_column(Date, index=True)
+    venue: Mapped[str] = mapped_column(String(300))
+    start_time: Mapped[time] = mapped_column(Time)
+    end_time: Mapped[time] = mapped_column(Time)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
+    musician: Mapped[MusicianProfile] = relationship(back_populates="bookings")
+    client: Mapped[ClientProfile] = relationship(back_populates="bookings")
 
 
 class ClientAvatar(Base):

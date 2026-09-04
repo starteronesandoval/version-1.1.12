@@ -111,6 +111,13 @@ class ApiService {
   Future<dynamic> get(String path) async => _decode(
         await http.get(Uri.parse('$baseUrl$path'), headers: await _headers()),
       );
+  Future<dynamic> post(String path, Map<String, dynamic> data) async => _decode(
+        await http.post(
+          Uri.parse('$baseUrl$path'),
+          headers: await _headers(),
+          body: jsonEncode(data),
+        ),
+      );
   Future<dynamic> put(String path, Map<String, dynamic> data) async => _decode(
         await http.put(
           Uri.parse('$baseUrl$path'),

@@ -71,6 +71,36 @@ def test_full_registration_and_search_flow():
         headers=ch,
     )
     assert available.status_code == 200 and available.json()["available"] is True
+    booking = client.post(
+        "/api/bookings",
+        headers=ch,
+        json={
+            "musician_id": profile.json()["id"],
+            "event_date": "2099-10-19",
+            "venue": "Salón Balam, Monterrey",
+            "start_time": "18:30",
+            "end_time": "23:45",
+        },
+    )
+    assert booking.status_code == 201
+    assert booking.json()["venue"] == "Salón Balam, Monterrey"
+    assert booking.json()["client_name"] == "Luis"
+    sold_date = client.get(
+        f"/api/musicians/{profile.json()['id']}/availability?date=2099-10-19",
+        headers=ch,
+    )
+    assert sold_date.status_code == 200
+    assert sold_date.json()["available"] is False
+    musician_notifications = client.get("/api/musicians/me/bookings", headers=mh)
+    assert musician_notifications.status_code == 200
+    assert musician_notifications.json()[0]["event_date"] == "2099-10-19"
+    assert musician_notifications.json()[0]["start_time"] == "18:30:00"
+    cannot_release = client.put(
+        "/api/musicians/me/busy-dates/2099-10-19",
+        headers=mh,
+        json={"busy": False},
+    )
+    assert cannot_release.status_code == 409
     avatar = client.post("/api/clients/me/avatar", headers=ch,
         files={"file": ("avatar.jpg", b"fake-image", "image/jpeg")})
     assert avatar.status_code == 201
