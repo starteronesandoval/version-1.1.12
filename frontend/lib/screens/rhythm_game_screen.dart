@@ -28,19 +28,21 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
 
   final _random = math.Random();
   late final AnimationController _fallController;
-  Timer? _nextTimer;
-  Timer? _missTimer;
+  Timer? _feedbackTimer;
+  Timer? _buttonTimer;
   int _positionIndex = 0;
   int? _pressedPitch;
   int _score = 0;
   int _streak = 0;
   int _lives = 3;
   int _round = 1;
-  bool _waiting = false;
+  bool _answered = false;
   String _feedback = '';
   Color _feedbackColor = Colors.transparent;
 
   int get _pitchIndex => _staffPositions[_positionIndex];
+  int get _fallMilliseconds => math.max(850, 2800 - ((_round - 1) * 75));
+  double get _speedMultiplier => 2800 / _fallMilliseconds;
 
   @override
   void initState() {
@@ -48,66 +50,75 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
     _positionIndex = _random.nextInt(_staffPositions.length);
     _fallController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 2800),
+      duration: Duration(milliseconds: _fallMilliseconds),
     )
       ..addStatusListener(_fallStatus)
       ..forward();
   }
 
   void _fallStatus(AnimationStatus status) {
-    if (status != AnimationStatus.completed || _waiting || _lives == 0) {
+    if (status != AnimationStatus.completed || _lives == 0) {
       return;
     }
-    _missTimer?.cancel();
-    _missTimer = Timer(const Duration(milliseconds: 900), () {
-      if (mounted && !_waiting) _bad();
-    });
+    if (!_answered) _bad();
+    if (_lives > 0) _nextRound();
   }
 
   void _pressPitch(int index) {
-    if (_waiting || _lives == 0) return;
-    _missTimer?.cancel();
+    if (_answered || _lives == 0) return;
     final entryDifference = (1 - _fallController.value).abs();
-    if (index != _pitchIndex || entryDifference > .28) {
+    if (index != _pitchIndex || entryDifference > .30) {
       _bad(index);
       return;
     }
-    _fallController.stop();
-    _pressedPitch = index;
-    if (entryDifference <= .1) {
-      _result('PERFECTO', const Color(0xFF65F1CC), 120);
+    if (_speedMultiplier >= 1.8 && _streak >= 4 && entryDifference <= .07) {
+      _result(index, 'GENIO', const Color(0xFFFFE066), 180);
+    } else if (entryDifference <= .10) {
+      _result(index, 'EXCELENTE', const Color(0xFF65F1CC), 120);
     } else {
-      _result('BIEN', const Color(0xFFFFD166), 70);
+      _result(index, 'BIEN', const Color(0xFF70C8FF), 70);
     }
   }
 
-  void _result(String label, Color color, int points) {
-    _missTimer?.cancel();
+  void _result(int pressedPitch, String label, Color color, int points) {
     _streak++;
     setState(() {
-      _waiting = true;
+      _answered = true;
+      _pressedPitch = pressedPitch;
       _score += points + (_streak * 10);
       _feedback = label;
       _feedbackColor = color;
     });
-    _nextTimer = Timer(const Duration(milliseconds: 900), _nextRound);
+    _scheduleVisualReset();
   }
 
   void _bad([int? pressedPitch]) {
-    if (_waiting || _lives == 0) return;
-    _missTimer?.cancel();
-    _fallController.stop();
+    if (_answered || _lives == 0) return;
     setState(() {
       _pressedPitch = pressedPitch;
-      _waiting = true;
+      _answered = true;
       _streak = 0;
       _lives--;
       _feedback = 'MAL';
       _feedbackColor = const Color(0xFFFF6578);
     });
-    if (_lives > 0) {
-      _nextTimer = Timer(const Duration(milliseconds: 900), _nextRound);
-    }
+    _scheduleVisualReset();
+  }
+
+  void _scheduleVisualReset() {
+    _feedbackTimer?.cancel();
+    _buttonTimer?.cancel();
+    _buttonTimer = Timer(const Duration(milliseconds: 180), () {
+      if (mounted) setState(() => _pressedPitch = null);
+    });
+    _feedbackTimer = Timer(const Duration(milliseconds: 620), () {
+      if (mounted) {
+        setState(() {
+          _feedback = '';
+          _feedbackColor = Colors.transparent;
+        });
+      }
+    });
   }
 
   void _nextRound() {
@@ -116,22 +127,23 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
     do {
       _positionIndex = _random.nextInt(_staffPositions.length);
     } while (_positionIndex == oldPosition);
+    _round++;
+    _fallController.duration = Duration(milliseconds: _fallMilliseconds);
     _fallController
       ..reset()
       ..forward();
     setState(() {
-      _round++;
       _pressedPitch = null;
-      _waiting = false;
-      _feedback = '';
-      _feedbackColor = Colors.transparent;
+      _answered = false;
     });
   }
 
   void _restart() {
-    _nextTimer?.cancel();
-    _missTimer?.cancel();
+    _feedbackTimer?.cancel();
+    _buttonTimer?.cancel();
     _positionIndex = _random.nextInt(_staffPositions.length);
+    _round = 1;
+    _fallController.duration = Duration(milliseconds: _fallMilliseconds);
     _fallController
       ..reset()
       ..forward();
@@ -140,8 +152,7 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
       _score = 0;
       _streak = 0;
       _lives = 3;
-      _round = 1;
-      _waiting = false;
+      _answered = false;
       _feedback = '';
       _feedbackColor = Colors.transparent;
     });
@@ -149,8 +160,8 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
 
   @override
   void dispose() {
-    _nextTimer?.cancel();
-    _missTimer?.cancel();
+    _feedbackTimer?.cancel();
+    _buttonTimer?.cancel();
     _fallController.dispose();
     super.dispose();
   }
@@ -194,8 +205,9 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               _pill(Icons.school_rounded, 'ETAPA 1'),
-                              const Text('Nota negra  ♩',
-                                  style: TextStyle(
+                              Text(
+                                  'Velocidad ×${_speedMultiplier.toStringAsFixed(1)}',
+                                  style: const TextStyle(
                                       color: Color(0xFFD8C5F5),
                                       fontSize: 12,
                                       fontWeight: FontWeight.w700)),

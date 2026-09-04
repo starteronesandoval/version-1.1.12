@@ -22,7 +22,8 @@ void main() {
     );
 
     expect(find.text('Pentagrama Balam'), findsOneWidget);
-    expect(find.text('Nota negra  ♩'), findsOneWidget);
+    expect(find.textContaining('nota negra'), findsOneWidget);
+    expect(find.textContaining('Velocidad ×'), findsOneWidget);
     expect(find.text('DO'), findsOneWidget);
     expect(find.text('RE'), findsOneWidget);
     expect(find.text('MI'), findsOneWidget);
