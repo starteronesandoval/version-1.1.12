@@ -40,6 +40,7 @@ class _BookingChatSheetState extends State<BookingChatSheet> {
   bool loading = true;
   bool refreshing = false;
   bool sending = false;
+  String? lockedMessage;
 
   @override
   void initState() {
@@ -64,8 +65,20 @@ class _BookingChatSheetState extends State<BookingChatSheet> {
       setState(() {
         messages = updated;
         loading = false;
+        lockedMessage = null;
       });
       if (changed) _scrollToEnd();
+    } on ApiException catch (error) {
+      if (error.statusCode == 403 && mounted) {
+        setState(() {
+          lockedMessage = error.message;
+          loading = false;
+        });
+      } else if (!silent && mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+        setState(() => loading = false);
+      }
     } catch (error) {
       if (!silent && mounted) {
         ScaffoldMessenger.of(context)
@@ -189,109 +202,148 @@ class _BookingChatSheetState extends State<BookingChatSheet> {
                 ),
                 Divider(color: Colors.white.withValues(alpha: .10), height: 1),
                 Expanded(
-                  child: loading
-                      ? const Center(child: CircularProgressIndicator())
-                      : messages.isEmpty
-                          ? Center(
-                              child: Padding(
-                                padding: const EdgeInsets.all(28),
-                                child: Text(
-                                  'Inicia la conversación. Puedes confirmar el horario o enviar la lista de canciones.',
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                      color:
-                                          Colors.white.withValues(alpha: .55)),
-                                ),
+                  child: lockedMessage != null
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(28),
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(22),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE2A62B)
+                                    .withValues(alpha: .14),
+                                borderRadius: BorderRadius.circular(22),
+                                border:
+                                    Border.all(color: const Color(0xFFECC35B)),
                               ),
-                            )
-                          : ListView.builder(
-                              controller: scroll,
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 16),
-                              itemCount: messages.length,
-                              itemBuilder: (_, index) {
-                                final item = messages[index];
-                                final mine = item['mine'] as bool? ?? false;
-                                return Align(
-                                  alignment: mine
-                                      ? Alignment.centerRight
-                                      : Alignment.centerLeft,
-                                  child: Container(
-                                    constraints: BoxConstraints(
-                                      maxWidth:
-                                          MediaQuery.sizeOf(context).width *
-                                              .76,
-                                    ),
-                                    margin: const EdgeInsets.only(bottom: 10),
-                                    padding: const EdgeInsets.fromLTRB(
-                                        14, 10, 14, 8),
-                                    decoration: BoxDecoration(
-                                      color: mine
-                                          ? const Color(0xFF7651B7)
-                                          : Colors.white.withValues(alpha: .10),
-                                      borderRadius: BorderRadius.only(
-                                        topLeft: const Radius.circular(18),
-                                        topRight: const Radius.circular(18),
-                                        bottomLeft:
-                                            Radius.circular(mine ? 18 : 4),
-                                        bottomRight:
-                                            Radius.circular(mine ? 4 : 18),
-                                      ),
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        if (!mine)
-                                          Text(item['sender_name'].toString(),
-                                              style: const TextStyle(
-                                                  color: Color(0xFF68DDCD),
-                                                  fontSize: 12,
-                                                  fontWeight: FontWeight.w700)),
-                                        Text(item['text'].toString()),
-                                        const SizedBox(height: 3),
-                                        Text(
-                                          _time(item['created_at']),
-                                          style: TextStyle(
-                                              fontSize: 10,
-                                              color: Colors.white
-                                                  .withValues(alpha: .48)),
-                                        ),
-                                      ],
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.lock_clock_outlined,
+                                      size: 48, color: Color(0xFFECC35B)),
+                                  const SizedBox(height: 10),
+                                  const Text('Chat fuera de horario',
+                                      style: TextStyle(
+                                          fontSize: 19,
+                                          fontWeight: FontWeight.w800)),
+                                  const SizedBox(height: 6),
+                                  Text(lockedMessage!,
+                                      textAlign: TextAlign.center),
+                                ],
+                              ),
+                            ),
+                          ),
+                        )
+                      : loading
+                          ? const Center(child: CircularProgressIndicator())
+                          : messages.isEmpty
+                              ? Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(28),
+                                    child: Text(
+                                      'Inicia la conversación. Puedes confirmar el horario o enviar la lista de canciones.',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                          color: Colors.white
+                                              .withValues(alpha: .55)),
                                     ),
                                   ),
-                                );
-                              },
-                            ),
+                                )
+                              : ListView.builder(
+                                  controller: scroll,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 16, vertical: 16),
+                                  itemCount: messages.length,
+                                  itemBuilder: (_, index) {
+                                    final item = messages[index];
+                                    final mine = item['mine'] as bool? ?? false;
+                                    return Align(
+                                      alignment: mine
+                                          ? Alignment.centerRight
+                                          : Alignment.centerLeft,
+                                      child: Container(
+                                        constraints: BoxConstraints(
+                                          maxWidth:
+                                              MediaQuery.sizeOf(context).width *
+                                                  .76,
+                                        ),
+                                        margin:
+                                            const EdgeInsets.only(bottom: 10),
+                                        padding: const EdgeInsets.fromLTRB(
+                                            14, 10, 14, 8),
+                                        decoration: BoxDecoration(
+                                          color: mine
+                                              ? const Color(0xFF7651B7)
+                                              : Colors.white
+                                                  .withValues(alpha: .10),
+                                          borderRadius: BorderRadius.only(
+                                            topLeft: const Radius.circular(18),
+                                            topRight: const Radius.circular(18),
+                                            bottomLeft:
+                                                Radius.circular(mine ? 18 : 4),
+                                            bottomRight:
+                                                Radius.circular(mine ? 4 : 18),
+                                          ),
+                                        ),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            if (!mine)
+                                              Text(
+                                                  item['sender_name']
+                                                      .toString(),
+                                                  style: const TextStyle(
+                                                      color: Color(0xFF68DDCD),
+                                                      fontSize: 12,
+                                                      fontWeight:
+                                                          FontWeight.w700)),
+                                            Text(item['text'].toString()),
+                                            const SizedBox(height: 3),
+                                            Text(
+                                              _time(item['created_at']),
+                                              style: TextStyle(
+                                                  fontSize: 10,
+                                                  color: Colors.white
+                                                      .withValues(alpha: .48)),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
                 ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 9, 12, 12),
-                  child: Row(children: [
-                    Expanded(
-                      child: TextField(
-                        controller: message,
-                        minLines: 1,
-                        maxLines: 3,
-                        textCapitalization: TextCapitalization.sentences,
-                        decoration: const InputDecoration(
-                          hintText: 'Horario, canción o indicación…',
-                          prefixIcon: Icon(Icons.music_note_outlined),
+                if (lockedMessage == null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 9, 12, 12),
+                    child: Row(children: [
+                      Expanded(
+                        child: TextField(
+                          controller: message,
+                          minLines: 1,
+                          maxLines: 3,
+                          textCapitalization: TextCapitalization.sentences,
+                          decoration: const InputDecoration(
+                            hintText: 'Horario, canción o indicación…',
+                            prefixIcon: Icon(Icons.music_note_outlined),
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton.filled(
-                      onPressed: sending ? null : _send,
-                      icon: sending
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.send_rounded),
-                    ),
-                  ]),
-                ),
+                      const SizedBox(width: 8),
+                      IconButton.filled(
+                        onPressed: sending ? null : _send,
+                        icon: sending
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.send_rounded),
+                      ),
+                    ]),
+                  ),
               ],
             ),
           ),

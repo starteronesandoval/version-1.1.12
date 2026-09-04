@@ -653,8 +653,12 @@ class _ClientHomeState extends State<ClientHome> {
                                 }
                               });
                             },
-                            icon: const Icon(Icons.forum_outlined),
-                            label: const Text('Abrir chat del evento'),
+                            icon: Icon(bookingResult!['chat_active'] == true
+                                ? Icons.forum_outlined
+                                : Icons.lock_clock_outlined),
+                            label: Text(bookingResult!['chat_active'] == true
+                                ? 'Abrir chat del evento'
+                                : 'Ver horario del chat'),
                           ),
                         ]),
                       ),
@@ -744,8 +748,12 @@ class _ClientHomeState extends State<ClientHome> {
                                   }
                                 });
                               },
-                              icon: const Icon(Icons.forum_outlined),
-                              label: const Text('Abrir chat'),
+                              icon: Icon(item['chat_active'] == true
+                                  ? Icons.forum_outlined
+                                  : Icons.lock_clock_outlined),
+                              label: Text(item['chat_active'] == true
+                                  ? 'Abrir chat'
+                                  : 'Disponible durante el evento'),
                             ),
                           ],
                         ),

@@ -9,9 +9,9 @@ class Settings(BaseSettings):
     secret_key: str = "desarrollo-cambiar-en-produccion"
     access_token_minutes: int = 60 * 24 * 7
     upload_dir: Path = Path("uploads")
+    event_timezone: str = "America/Mexico_City"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
 settings = Settings()
-

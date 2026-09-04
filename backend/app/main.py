@@ -1,8 +1,9 @@
 import json
 import shutil
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -92,6 +93,7 @@ def booking_query():
 
 
 def booking_out(booking: Booking) -> BookingResponse:
+    chat_active, chat_status = booking_chat_state(booking)
     return BookingResponse(
         id=booking.id,
         musician_id=booking.musician_id,
@@ -104,7 +106,35 @@ def booking_out(booking: Booking) -> BookingResponse:
         start_time=booking.start_time,
         end_time=booking.end_time,
         created_at=booking.created_at,
+        chat_active=chat_active,
+        chat_status=chat_status,
     )
+
+
+def booking_chat_state(booking: Booking) -> tuple[bool, str]:
+    timezone = ZoneInfo(settings.event_timezone)
+    now = datetime.now(timezone)
+    starts_at = datetime.combine(
+        booking.event_date, booking.start_time, tzinfo=timezone
+    )
+    ends_at = datetime.combine(
+        booking.event_date, booking.end_time, tzinfo=timezone
+    )
+    if now < starts_at:
+        return False, (
+            "El chat se activará durante el evento, de "
+            f"{booking.start_time.strftime('%H:%M')} a "
+            f"{booking.end_time.strftime('%H:%M')}."
+        )
+    if now >= ends_at:
+        return False, "El chat terminó al finalizar el horario del evento."
+    return True, "Chat activo durante el horario del evento."
+
+
+def require_active_chat(booking: Booking):
+    active, status = booking_chat_state(booking)
+    if not active:
+        raise HTTPException(403, status)
 
 
 def accessible_booking(booking_id: int, user: User, db: Session) -> Booking:
@@ -471,6 +501,7 @@ def get_booking_messages(
     db: Session = Depends(get_db),
 ):
     booking = accessible_booking(booking_id, user, db)
+    require_active_chat(booking)
     messages = db.scalars(
         select(ChatMessage)
         .where(ChatMessage.booking_id == booking.id)
@@ -491,6 +522,7 @@ def send_booking_message(
     db: Session = Depends(get_db),
 ):
     booking = accessible_booking(booking_id, user, db)
+    require_active_chat(booking)
     message = ChatMessage(
         booking_id=booking.id,
         sender_user_id=user.id,

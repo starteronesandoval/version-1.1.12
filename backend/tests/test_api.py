@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ["DATABASE_URL"] = "sqlite:///./test_balam.db"
 os.environ["UPLOAD_DIR"] = "test_uploads"
@@ -98,26 +99,35 @@ def test_full_registration_and_search_flow():
     client_bookings = client.get("/api/clients/me/bookings", headers=ch)
     assert client_bookings.status_code == 200
     booking_id = booking.json()["id"]
-    song_request = client.post(
-        f"/api/bookings/{booking_id}/messages",
-        headers=ch,
-        json={"text": "¿Pueden tocar El Rey a las 21:00?"},
-    )
-    assert song_request.status_code == 201
-    assert song_request.json()["mine"] is True
-    musician_chat = client.get(f"/api/bookings/{booking_id}/messages", headers=mh)
-    assert musician_chat.status_code == 200
-    assert musician_chat.json()[0]["mine"] is False
-    assert musician_chat.json()[0]["sender_name"] == "Luis"
-    reply = client.post(
-        f"/api/bookings/{booking_id}/messages",
-        headers=mh,
-        json={"text": "Sí, la agregamos al repertorio."},
-    )
-    assert reply.status_code == 201
-    full_chat = client.get(f"/api/bookings/{booking_id}/messages", headers=ch)
-    assert len(full_chat.json()) == 2
-    assert full_chat.json()[1]["sender_name"] == "Los del Valle"
+    locked_chat = client.get(f"/api/bookings/{booking_id}/messages", headers=ch)
+    assert locked_chat.status_code == 403
+    assert "se activará durante el evento" in locked_chat.json()["detail"]
+    with patch(
+        "app.main.booking_chat_state",
+        return_value=(True, "Chat activo durante el horario del evento."),
+    ):
+        song_request = client.post(
+            f"/api/bookings/{booking_id}/messages",
+            headers=ch,
+            json={"text": "¿Pueden tocar El Rey a las 21:00?"},
+        )
+        assert song_request.status_code == 201
+        assert song_request.json()["mine"] is True
+        musician_chat = client.get(
+            f"/api/bookings/{booking_id}/messages", headers=mh
+        )
+        assert musician_chat.status_code == 200
+        assert musician_chat.json()[0]["mine"] is False
+        assert musician_chat.json()[0]["sender_name"] == "Luis"
+        reply = client.post(
+            f"/api/bookings/{booking_id}/messages",
+            headers=mh,
+            json={"text": "Sí, la agregamos al repertorio."},
+        )
+        assert reply.status_code == 201
+        full_chat = client.get(f"/api/bookings/{booking_id}/messages", headers=ch)
+        assert len(full_chat.json()) == 2
+        assert full_chat.json()[1]["sender_name"] == "Los del Valle"
     stranger = client.post("/api/auth/register", json={
         "email": "otro@example.com", "password": "segura123", "role": "client"
     })

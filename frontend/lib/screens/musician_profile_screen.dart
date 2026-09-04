@@ -522,8 +522,12 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
                             api: widget.api,
                             booking: item,
                           ),
-                          icon: const Icon(Icons.forum_outlined),
-                          label: const Text('Chat del evento'),
+                          icon: Icon(item['chat_active'] == true
+                              ? Icons.forum_outlined
+                              : Icons.lock_clock_outlined),
+                          label: Text(item['chat_active'] == true
+                              ? 'Chat del evento'
+                              : 'Chat disponible en el evento'),
                         ),
                       ],
                     ),

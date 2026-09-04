@@ -121,6 +121,8 @@ class BookingResponse(BaseModel):
     start_time: time
     end_time: time
     created_at: datetime
+    chat_active: bool
+    chat_status: str
 
 
 class ChatMessageCreate(BaseModel):
