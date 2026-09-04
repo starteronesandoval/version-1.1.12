@@ -12,166 +12,201 @@ class RhythmGameScreen extends StatefulWidget {
   State<RhythmGameScreen> createState() => _RhythmGameScreenState();
 }
 
-class _RhythmGameScreenState extends State<RhythmGameScreen> {
+class _RhythmGameScreenState extends State<RhythmGameScreen>
+    with SingleTickerProviderStateMixin {
   static const _bpm = 80;
   static const _beatMilliseconds = 60000 / _bpm;
-  static const _notes = <_RhythmNote>[
-    _RhythmNote('Redonda', '𝅝', 4),
-    _RhythmNote('Blanca', '𝅗𝅥', 2),
-    _RhythmNote('Negra', '♩', 1),
-    _RhythmNote('Corchea', '♪', .5),
-    _RhythmNote('Semicorchea', '♬', .25),
+  static const _figures = <_RhythmFigure>[
+    _RhythmFigure('Redonda', '𝅝', 4),
+    _RhythmFigure('Blanca', '𝅗𝅥', 2),
+    _RhythmFigure('Negra', '♩', 1),
+    _RhythmFigure('Corchea', '♪', .5),
+    _RhythmFigure('Semicorchea', '♬', .25),
+  ];
+  static const _pitches = <_Pitch>[
+    _Pitch('DO', Color(0xFFFF6680)),
+    _Pitch('RE', Color(0xFFFF9B57)),
+    _Pitch('MI', Color(0xFFFFD166)),
+    _Pitch('FA', Color(0xFF62D99F)),
+    _Pitch('SOL', Color(0xFF55CDE1)),
+    _Pitch('LA', Color(0xFF788BFF)),
+    _Pitch('SI', Color(0xFFC879F4)),
   ];
 
   final _random = math.Random();
-  final _stopwatch = Stopwatch();
-  Timer? _ticker;
-  Timer? _nextRoundTimer;
-  late _RhythmNote _current;
+  final _holdWatch = Stopwatch();
+  late final AnimationController _fallController;
+  Timer? _nextTimer;
+  Timer? _missTimer;
+  late _RhythmFigure _figure;
+  int _pitchIndex = 0;
+  int? _pressedPitch;
   int _score = 0;
   int _streak = 0;
   int _lives = 3;
   int _round = 1;
-  int _elapsedMilliseconds = 0;
   bool _holding = false;
-  bool _waitingForNext = false;
-  String _feedback = 'Mantén presionado para saltar';
-  Color _feedbackColor = Colors.white70;
+  bool _waiting = false;
+  bool _perfectEntry = false;
+  String _feedback = '';
+  Color _feedbackColor = Colors.transparent;
+
+  int get _targetMilliseconds => (_figure.beats * _beatMilliseconds).round();
 
   @override
   void initState() {
     super.initState();
-    _current = _notes[_random.nextInt(_notes.length)];
+    _figure = _figures[_random.nextInt(_figures.length)];
+    _pitchIndex = _random.nextInt(_pitches.length);
+    _fallController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2800),
+    )
+      ..addStatusListener(_fallStatus)
+      ..forward();
   }
 
-  int get _targetMilliseconds => (_current.beats * _beatMilliseconds).round();
+  void _fallStatus(AnimationStatus status) {
+    if (status != AnimationStatus.completed ||
+        _holding ||
+        _waiting ||
+        _lives == 0) {
+      return;
+    }
+    _missTimer?.cancel();
+    _missTimer = Timer(const Duration(milliseconds: 900), () {
+      if (mounted && !_holding && !_waiting) _bad();
+    });
+  }
 
-  double get _holdRatio =>
-      _targetMilliseconds == 0 ? 0 : _elapsedMilliseconds / _targetMilliseconds;
-
-  void _startHold() {
-    if (_holding || _waitingForNext || _lives == 0) return;
-    _stopwatch
+  void _pressPitch(int index) {
+    if (_holding || _waiting || _lives == 0) return;
+    _missTimer?.cancel();
+    final entryDifference = (1 - _fallController.value).abs();
+    if (index != _pitchIndex || entryDifference > .28) {
+      _bad();
+      return;
+    }
+    _fallController.stop();
+    _holdWatch
       ..reset()
       ..start();
-    _ticker?.cancel();
-    _ticker = Timer.periodic(const Duration(milliseconds: 16), (_) {
-      if (!mounted) return;
-      setState(() => _elapsedMilliseconds = _stopwatch.elapsedMilliseconds);
-    });
     setState(() {
       _holding = true;
-      _elapsedMilliseconds = 0;
-      _feedback = '¡En el aire! Suelta al completar los tiempos';
-      _feedbackColor = const Color(0xFF7DE8D8);
+      _pressedPitch = index;
+      _perfectEntry = entryDifference <= .1;
+      _feedback = '';
     });
   }
 
-  void _endHold() {
-    if (!_holding) return;
-    _stopwatch.stop();
-    _ticker?.cancel();
-    final elapsed = _stopwatch.elapsedMilliseconds;
-    final error = (elapsed - _targetMilliseconds).abs();
-    final relativeError = error / _targetMilliseconds;
-    final minimumTolerance = _current.beats <= .5 ? 90 : 0;
+  void _releasePitch(int index) {
+    if (!_holding || _pressedPitch != index) return;
+    _holdWatch.stop();
+    final error = (_holdWatch.elapsedMilliseconds - _targetMilliseconds).abs();
     final perfectTolerance = math.max(
       (_targetMilliseconds * .12).round(),
-      minimumTolerance,
+      _figure.beats <= .5 ? 90 : 0,
     );
     final goodTolerance = math.max(
       (_targetMilliseconds * .25).round(),
-      minimumTolerance + 55,
+      _figure.beats <= .5 ? 145 : 0,
     );
-
-    var points = 0;
-    var message = '';
-    var color = Colors.white;
-    if (error <= perfectTolerance) {
-      _streak++;
-      points = 100 + (_streak * 10);
-      message = '¡Ritmo perfecto! +$points';
-      color = const Color(0xFF67E8D2);
-    } else if (error <= goodTolerance || relativeError <= .25) {
-      _streak++;
-      points = 60 + (_streak * 5);
-      message = '¡Buen salto! +$points';
-      color = const Color(0xFFFFD166);
+    if (_perfectEntry && error <= perfectTolerance) {
+      _result('PERFECTO', const Color(0xFF65F1CC), 120);
+    } else if (error <= goodTolerance) {
+      _result('BIEN', const Color(0xFFFFD166), 70);
     } else {
-      _streak = 0;
-      _lives--;
-      message = elapsed < _targetMilliseconds
-          ? 'Soltaste demasiado pronto'
-          : 'Mantuviste el salto demasiado tiempo';
-      color = const Color(0xFFFF8190);
+      _bad();
     }
+  }
 
+  void _result(String label, Color color, int points) {
+    _holdWatch.stop();
+    _missTimer?.cancel();
+    _streak++;
     setState(() {
       _holding = false;
-      _waitingForNext = true;
-      _elapsedMilliseconds = elapsed;
-      _score += points;
-      _feedback = message;
+      _pressedPitch = null;
+      _waiting = true;
+      _score += points + (_streak * 10);
+      _feedback = label;
       _feedbackColor = color;
     });
+    _nextTimer = Timer(const Duration(milliseconds: 900), _nextRound);
+  }
 
+  void _bad() {
+    if (_waiting || _lives == 0) return;
+    _holdWatch.stop();
+    _missTimer?.cancel();
+    _fallController.stop();
+    setState(() {
+      _holding = false;
+      _pressedPitch = null;
+      _waiting = true;
+      _streak = 0;
+      _lives--;
+      _feedback = 'MAL';
+      _feedbackColor = const Color(0xFFFF6578);
+    });
     if (_lives > 0) {
-      _nextRoundTimer = Timer(const Duration(milliseconds: 900), _nextRound);
+      _nextTimer = Timer(const Duration(milliseconds: 900), _nextRound);
     }
   }
 
   void _nextRound() {
     if (!mounted) return;
-    var next = _notes[_random.nextInt(_notes.length)];
-    if (_notes.length > 1) {
-      while (next == _current) {
-        next = _notes[_random.nextInt(_notes.length)];
-      }
-    }
+    final oldFigure = _figure;
+    final oldPitch = _pitchIndex;
+    do {
+      _figure = _figures[_random.nextInt(_figures.length)];
+      _pitchIndex = _random.nextInt(_pitches.length);
+    } while (_figure == oldFigure && _pitchIndex == oldPitch);
+    _fallController
+      ..reset()
+      ..forward();
     setState(() {
-      _current = next;
       _round++;
-      _elapsedMilliseconds = 0;
-      _waitingForNext = false;
-      _feedback = 'Mantén presionado para saltar';
-      _feedbackColor = Colors.white70;
+      _waiting = false;
+      _feedback = '';
+      _feedbackColor = Colors.transparent;
     });
   }
 
   void _restart() {
-    _ticker?.cancel();
-    _nextRoundTimer?.cancel();
-    _stopwatch
+    _nextTimer?.cancel();
+    _missTimer?.cancel();
+    _holdWatch
       ..stop()
       ..reset();
+    _figure = _figures[_random.nextInt(_figures.length)];
+    _pitchIndex = _random.nextInt(_pitches.length);
+    _fallController
+      ..reset()
+      ..forward();
     setState(() {
+      _pressedPitch = null;
       _score = 0;
       _streak = 0;
       _lives = 3;
       _round = 1;
-      _elapsedMilliseconds = 0;
       _holding = false;
-      _waitingForNext = false;
-      _current = _notes[_random.nextInt(_notes.length)];
-      _feedback = 'Mantén presionado para saltar';
-      _feedbackColor = Colors.white70;
+      _waiting = false;
+      _feedback = '';
+      _feedbackColor = Colors.transparent;
     });
   }
 
   @override
   void dispose() {
-    _ticker?.cancel();
-    _nextRoundTimer?.cancel();
-    _stopwatch.stop();
+    _nextTimer?.cancel();
+    _missTimer?.cancel();
+    _fallController.dispose();
+    _holdWatch.stop();
     super.dispose();
   }
 
-  String _formatMilliseconds(int value) {
-    if (value >= 1000) return '${(value / 1000).toStringAsFixed(2)} s';
-    return '$value ms';
-  }
-
-  String _formatBeats(double value) {
+  String _beats(double value) {
     if (value == 4) return '4 tiempos';
     if (value == 2) return '2 tiempos';
     if (value == 1) return '1 tiempo';
@@ -180,258 +215,316 @@ class _RhythmGameScreenState extends State<RhythmGameScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    final progress = _holdRatio.clamp(0.0, 1.0);
-    return Scaffold(
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        title: const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Salto musical',
-                style: TextStyle(fontWeight: FontWeight.w800)),
-            Text('Entrena tu ritmo',
-                style: TextStyle(fontSize: 12, color: Color(0xFFC8B5EE))),
+  Widget build(BuildContext context) => Scaffold(
+        extendBodyBehindAppBar: true,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          title: const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Pentagrama Balam',
+                  style: TextStyle(fontWeight: FontWeight.w800)),
+              Text('Identifica y sostén la nota',
+                  style: TextStyle(fontSize: 12, color: Color(0xFFC8B5EE))),
+            ],
+          ),
+          actions: [
+            IconButton(
+              tooltip: 'Cómo jugar',
+              onPressed: _instructions,
+              icon: const Icon(Icons.help_outline_rounded),
+            ),
           ],
         ),
-        actions: [
-          IconButton(
-            tooltip: 'Cómo jugar',
-            onPressed: _showInstructions,
-            icon: const Icon(Icons.help_outline_rounded),
-          ),
-        ],
-      ),
-      body: GlassBackground(
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-            child: Column(
-              children: [
-                _scoreBar(),
-                const SizedBox(height: 12),
-                Expanded(
-                  child: GlassCard(
-                    padding: const EdgeInsets.all(14),
-                    child: Column(
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            _pill(Icons.speed_rounded, '$_bpm BPM'),
-                            Text('Ronda $_round',
-                                style: const TextStyle(
-                                    color: Color(0xFFCDB7F7),
-                                    fontWeight: FontWeight.w700)),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        Expanded(
-                          child: LayoutBuilder(
-                            builder: (_, constraints) => Stack(
-                              alignment: Alignment.center,
-                              children: [
-                                const Positioned.fill(
-                                    child: CustomPaint(
-                                        painter: _MusicTrackPainter())),
-                                Positioned(
-                                  right: constraints.maxWidth * .12,
-                                  top: constraints.maxHeight * .31,
-                                  child: _TargetNote(note: _current),
-                                ),
-                                Positioned(
-                                  left: constraints.maxWidth * .08,
-                                  bottom: 34 +
-                                      _jumpHeight(
-                                          constraints.maxHeight, progress),
-                                  child: const _Musician(),
-                                ),
-                              ],
-                            ),
+        body: GlassBackground(
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 14),
+              child: Column(
+                children: [
+                  _scoreBar(),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: GlassCard(
+                      padding: const EdgeInsets.all(10),
+                      child: Column(
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              _pill(Icons.speed_rounded, '$_bpm BPM'),
+                              Text('${_figure.name} · ${_beats(_figure.beats)}',
+                                  style: const TextStyle(
+                                      color: Color(0xFFD8C5F5),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700)),
+                              Text('Ronda $_round',
+                                  style: const TextStyle(
+                                      color: Color(0xFFCDB7F7),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700)),
+                            ],
                           ),
-                        ),
-                        Text(
-                          _feedback,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                              color: _feedbackColor,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 16),
-                        ),
-                        const SizedBox(height: 10),
-                        _timingMeter(progress),
+                          const SizedBox(height: 6),
+                          Expanded(child: _gameBoard()),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (_lives == 0) ...[
+                    const SizedBox(height: 8),
+                    FilledButton.icon(
+                      onPressed: _restart,
+                      style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(58)),
+                      icon: const Icon(Icons.replay_rounded),
+                      label: Text('Jugar otra vez • $_score puntos'),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+  Widget _gameBoard() => LayoutBuilder(
+        builder: (_, constraints) {
+          final controlsWidth = constraints.maxWidth < 340 ? 58.0 : 68.0;
+          final fallingWidth = constraints.maxWidth - controlsWidth - 10;
+          final cardHeight = (74 + (_figure.beats * 13)).clamp(78.0, 126.0);
+          return Stack(
+            clipBehavior: Clip.hardEdge,
+            children: [
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF120A27).withValues(alpha: .38),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: fallingWidth + 4,
+                right: 0,
+                top: 0,
+                bottom: 0,
+                child: CustomPaint(
+                  painter: _ReferenceStaffPainter(_pitches),
+                ),
+              ),
+              AnimatedBuilder(
+                animation: _fallController,
+                builder: (_, child) {
+                  final start = -cardHeight - 8;
+                  final end = constraints.maxHeight - cardHeight - 12;
+                  final top = start + ((end - start) * _fallController.value);
+                  return Positioned(
+                    left: 8,
+                    top: top,
+                    width: fallingWidth - 12,
+                    height: cardHeight,
+                    child: child!,
+                  );
+                },
+                child: _FallingStaff(
+                  pitchIndex: _pitchIndex,
+                  figure: _figure,
+                  color: _pitches[_pitchIndex].color,
+                  holding: _holding,
+                ),
+              ),
+              Positioned(
+                left: 6,
+                width: fallingWidth - 8,
+                bottom: 0,
+                height: 22,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        const Color(0xFF65F1CC).withValues(alpha: 0),
+                        const Color(0xFF65F1CC).withValues(alpha: .35),
                       ],
+                    ),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: fallingWidth + 4,
+                width: controlsWidth - 4,
+                top: 0,
+                bottom: 0,
+                child: _pitchCircles(),
+              ),
+              Positioned(
+                left: 0,
+                width: fallingWidth,
+                top: 0,
+                bottom: 0,
+                child: Center(child: _feedbackBadge()),
+              ),
+            ],
+          );
+        },
+      );
+
+  Widget _pitchCircles() => LayoutBuilder(
+        builder: (_, constraints) => Stack(
+          children: [
+            for (var i = 0; i < _pitches.length; i++)
+              Positioned(
+                right: 3,
+                top: _pitchY(i, constraints.maxHeight) - 18,
+                width: 44,
+                height: 36,
+                child: Listener(
+                  behavior: HitTestBehavior.opaque,
+                  onPointerDown: (_) => _pressPitch(i),
+                  onPointerUp: (_) => _releasePitch(i),
+                  onPointerCancel: (_) => _releasePitch(i),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 100),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _pressedPitch == i
+                          ? _pitches[i].color
+                          : const Color(0xFF20123D),
+                      border: Border.all(
+                        color: _pitches[i].color,
+                        width: _pressedPitch == i ? 3 : 2,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: _pitches[i]
+                              .color
+                              .withValues(alpha: _pressedPitch == i ? .7 : .3),
+                          blurRadius: _pressedPitch == i ? 18 : 8,
+                        ),
+                      ],
+                    ),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        _pitches[i].name,
+                        style: TextStyle(
+                          color: _pressedPitch == i
+                              ? const Color(0xFF170C2C)
+                              : _pitches[i].color,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
                     ),
                   ),
                 ),
-                const SizedBox(height: 14),
-                if (_lives == 0)
-                  FilledButton.icon(
-                    onPressed: _restart,
-                    style: FilledButton.styleFrom(
-                        minimumSize: const Size.fromHeight(64)),
-                    icon: const Icon(Icons.replay_rounded),
-                    label: Text('Jugar otra vez • $_score puntos'),
-                  )
-                else
-                  Listener(
-                    onPointerDown: (_) => _startHold(),
-                    onPointerUp: (_) => _endHold(),
-                    onPointerCancel: (_) => _endHold(),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 120),
-                      height: 72,
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(24),
-                        gradient: LinearGradient(
-                          colors: _holding
-                              ? const [Color(0xFF28BFA9), Color(0xFF2385D0)]
-                              : const [Color(0xFF9A62F5), Color(0xFF6A3BC1)],
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: (_holding
-                                    ? const Color(0xFF38D9C2)
-                                    : const Color(0xFF9A62F5))
-                                .withValues(alpha: .35),
-                            blurRadius: 24,
-                            spreadRadius: _holding ? 4 : 0,
-                          ),
-                        ],
-                      ),
-                      child: Center(
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(_holding
-                                ? Icons.keyboard_double_arrow_up_rounded
-                                : Icons.touch_app_rounded),
-                            const SizedBox(width: 10),
-                            Text(
-                              _waitingForNext
-                                  ? 'PREPÁRATE…'
-                                  : _holding
-                                      ? 'MANTÉN Y SUELTA'
-                                      : 'MANTÉN PARA SALTAR',
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: .7),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
+              ),
+          ],
         ),
-      ),
-    );
+      );
+
+  double _pitchY(int index, double height) {
+    final lineSpacing = math.min(58.0, (height - 38) / 5.0);
+    final bottomLine = height - lineSpacing - 18;
+    return bottomLine - ((index - 2) * lineSpacing / 2);
   }
 
-  double _jumpHeight(double availableHeight, double progress) {
-    if (!_holding && !_waitingForNext) return 0;
-    final safeHeight = math.min(availableHeight * .32, 100.0);
-    final arcProgress = progress.clamp(0.0, 1.0);
-    return math.sin(arcProgress * math.pi) * safeHeight;
-  }
+  Widget _feedbackBadge() => AnimatedSwitcher(
+        duration: const Duration(milliseconds: 180),
+        transitionBuilder: (child, animation) => ScaleTransition(
+          scale: CurvedAnimation(parent: animation, curve: Curves.easeOutBack),
+          child: FadeTransition(opacity: animation, child: child),
+        ),
+        child: _feedback.isEmpty
+            ? const SizedBox.shrink(key: ValueKey('empty'))
+            : Container(
+                key: ValueKey(_feedback),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF160D2B).withValues(alpha: .9),
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(color: _feedbackColor, width: 2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _feedbackColor.withValues(alpha: .48),
+                      blurRadius: 28,
+                      spreadRadius: 4,
+                    ),
+                  ],
+                ),
+                child: Text(
+                  _feedback,
+                  style: TextStyle(
+                    color: _feedbackColor,
+                    fontSize: 27,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.3,
+                  ),
+                ),
+              ),
+      );
 
   Widget _scoreBar() => Row(
         children: [
-          Expanded(child: _statCard(Icons.stars_rounded, '$_score', 'Puntos')),
-          const SizedBox(width: 8),
+          Expanded(child: _stat(Icons.stars_rounded, '$_score', 'Puntos')),
+          const SizedBox(width: 6),
           Expanded(
-              child: _statCard(
+              child: _stat(
                   Icons.local_fire_department_rounded, 'x$_streak', 'Racha')),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           Expanded(
-            child: _statCard(
-              Icons.favorite_rounded,
-              '♥' * _lives + '♡' * (3 - _lives),
-              'Vidas',
-            ),
-          ),
+              child: _stat(Icons.favorite_rounded,
+                  '♥' * _lives + '♡' * (3 - _lives), 'Vidas')),
         ],
       );
 
-  Widget _statCard(IconData icon, String value, String label) => Container(
-        padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 8),
+  Widget _stat(IconData icon, String value, String label) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 5),
         decoration: BoxDecoration(
           color: Colors.white.withValues(alpha: .09),
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(color: Colors.white.withValues(alpha: .14)),
         ),
         child: Column(
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, size: 16, color: const Color(0xFFD2B7FF)),
-                const SizedBox(width: 5),
-                Flexible(
-                  child: Text(value,
-                      overflow: TextOverflow.fade,
-                      softWrap: false,
-                      style: const TextStyle(fontWeight: FontWeight.w800)),
-                ),
-              ],
-            ),
+            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(icon, size: 15, color: const Color(0xFFD2B7FF)),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(value,
+                    overflow: TextOverflow.fade,
+                    softWrap: false,
+                    style: const TextStyle(fontWeight: FontWeight.w800)),
+              ),
+            ]),
             Text(label,
                 style: TextStyle(
-                    fontSize: 11, color: Colors.white.withValues(alpha: .58))),
+                    fontSize: 10, color: Colors.white.withValues(alpha: .58))),
           ],
         ),
       );
 
   Widget _pill(IconData icon, String label) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
         decoration: BoxDecoration(
           color: Colors.white.withValues(alpha: .09),
           borderRadius: BorderRadius.circular(20),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 16, color: const Color(0xFF78E2D2)),
-            const SizedBox(width: 6),
-            Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
-          ],
-        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 14, color: const Color(0xFF78E2D2)),
+          const SizedBox(width: 4),
+          Text(label,
+              style:
+                  const TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
+        ]),
       );
 
-  Widget _timingMeter(double progress) => Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(_formatMilliseconds(_elapsedMilliseconds),
-                  style: const TextStyle(fontFeatures: [
-                    FontFeature.tabularFigures(),
-                  ])),
-              Text('Meta: ${_formatMilliseconds(_targetMilliseconds)}',
-                  style: const TextStyle(
-                      color: Color(0xFFCDB7F7), fontWeight: FontWeight.w700)),
-            ],
-          ),
-          const SizedBox(height: 6),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: LinearProgressIndicator(
-              minHeight: 12,
-              value: progress,
-              backgroundColor: Colors.white.withValues(alpha: .1),
-              color: _holdRatio > 1.25
-                  ? const Color(0xFFFF6578)
-                  : const Color(0xFF61DDCB),
-            ),
-          ),
-        ],
-      );
-
-  Future<void> _showInstructions() => showModalBottomSheet<void>(
+  Future<void> _instructions() => showModalBottomSheet<void>(
         context: context,
         backgroundColor: const Color(0xFF1C1235),
         showDragHandle: true,
@@ -448,28 +541,26 @@ class _RhythmGameScreenState extends State<RhythmGameScreen> {
                         TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
                 const SizedBox(height: 8),
                 Text(
-                  'Mantén presionado el botón durante el valor de la figura y suelta justo al completar sus tiempos.',
+                  'Lee la nota del pentagrama que cae. Cuando llegue a la zona verde, mantén presionado su círculo de la derecha durante el valor de la figura.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.white.withValues(alpha: .7)),
                 ),
                 const SizedBox(height: 14),
-                for (final note in _notes)
+                for (final figure in _figures)
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(
-                      children: [
-                        SizedBox(
-                            width: 38,
-                            child: Text(note.symbol,
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(fontSize: 25))),
-                        Expanded(child: Text(note.name)),
-                        Text(_formatBeats(note.beats),
-                            style: const TextStyle(
-                                color: Color(0xFF7DE8D8),
-                                fontWeight: FontWeight.w700)),
-                      ],
-                    ),
+                    child: Row(children: [
+                      SizedBox(
+                          width: 38,
+                          child: Text(figure.symbol,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(fontSize: 25))),
+                      Expanded(child: Text(figure.name)),
+                      Text(_beats(figure.beats),
+                          style: const TextStyle(
+                              color: Color(0xFF7DE8D8),
+                              fontWeight: FontWeight.w700)),
+                    ]),
                   ),
               ],
             ),
@@ -478,108 +569,138 @@ class _RhythmGameScreenState extends State<RhythmGameScreen> {
       );
 }
 
-class _RhythmNote {
-  const _RhythmNote(this.name, this.symbol, this.beats);
-
+class _RhythmFigure {
+  const _RhythmFigure(this.name, this.symbol, this.beats);
   final String name;
   final String symbol;
   final double beats;
 }
 
-class _TargetNote extends StatelessWidget {
-  const _TargetNote({required this.note});
-
-  final _RhythmNote note;
-
-  @override
-  Widget build(BuildContext context) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 86,
-            height: 86,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: const LinearGradient(
-                  colors: [Color(0xFFFFD16A), Color(0xFFB979F7)]),
-              boxShadow: [
-                BoxShadow(
-                    color: const Color(0xFFFFC861).withValues(alpha: .38),
-                    blurRadius: 28,
-                    spreadRadius: 3),
-              ],
-            ),
-            child: Text(note.symbol,
-                style: const TextStyle(
-                    color: Color(0xFF211037),
-                    fontSize: 48,
-                    fontWeight: FontWeight.w900)),
-          ),
-          const SizedBox(height: 6),
-          Text(note.name, style: const TextStyle(fontWeight: FontWeight.w900)),
-        ],
-      );
+class _Pitch {
+  const _Pitch(this.name, this.color);
+  final String name;
+  final Color color;
 }
 
-class _Musician extends StatelessWidget {
-  const _Musician();
+class _FallingStaff extends StatelessWidget {
+  const _FallingStaff({
+    required this.pitchIndex,
+    required this.figure,
+    required this.color,
+    required this.holding,
+  });
+
+  final int pitchIndex;
+  final _RhythmFigure figure;
+  final Color color;
+  final bool holding;
 
   @override
-  Widget build(BuildContext context) => Container(
-        width: 82,
-        height: 82,
-        padding: const EdgeInsets.all(4),
+  Widget build(BuildContext context) => AnimatedContainer(
+        duration: const Duration(milliseconds: 100),
         decoration: BoxDecoration(
-          color: const Color(0xFF241343),
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: const Color(0xFF75E2D1), width: 2),
+          color: const Color(0xFF271548).withValues(alpha: .96),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: color, width: 2),
           boxShadow: [
             BoxShadow(
-                color: const Color(0xFF5DD8C6).withValues(alpha: .32),
-                blurRadius: 18),
+              color: color.withValues(alpha: holding ? .7 : .38),
+              blurRadius: holding ? 28 : 15,
+              spreadRadius: holding ? 4 : 1,
+            ),
           ],
         ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(17),
-          child: Image.asset(
-            'assets/avatars/jaguar_guitar.png',
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => const Icon(Icons.music_note_rounded,
-                size: 48, color: Color(0xFF75E2D1)),
-          ),
+        child: CustomPaint(
+          painter: _MiniStaffPainter(pitchIndex, figure, color),
         ),
       );
 }
 
-class _MusicTrackPainter extends CustomPainter {
-  const _MusicTrackPainter();
+class _MiniStaffPainter extends CustomPainter {
+  const _MiniStaffPainter(this.pitchIndex, this.figure, this.color);
+  final int pitchIndex;
+  final _RhythmFigure figure;
+  final Color color;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final linePaint = Paint()
-      ..color = Colors.white.withValues(alpha: .14)
-      ..strokeWidth = 1.4;
-    final glowPaint = Paint()
-      ..shader = const LinearGradient(
-        colors: [Color(0xFF62DCCB), Color(0xFF9D6AF4)],
-      ).createShader(Rect.fromLTWH(0, 0, size.width, size.height))
-      ..strokeWidth = 3;
-    final baseY = size.height - 26;
-    canvas.drawLine(Offset(8, baseY), Offset(size.width - 8, baseY), glowPaint);
-    final staffTop = size.height * .34;
+    final spacing = math.min(12.0, size.height / 7);
+    final top = (size.height - (spacing * 4)) / 2;
+    final left = math.min(46.0, size.width * .25);
+    final right = size.width - 10;
+    final line = Paint()
+      ..color = Colors.white.withValues(alpha: .45)
+      ..strokeWidth = 1.2;
     for (var i = 0; i < 5; i++) {
-      final y = staffTop + (i * 14);
-      canvas.drawLine(Offset(4, y), Offset(size.width - 4, y), linePaint);
+      final y = top + (i * spacing);
+      canvas.drawLine(Offset(left, y), Offset(right, y), line);
     }
-    final starPaint = Paint()..color = Colors.white.withValues(alpha: .2);
-    for (var i = 0; i < 12; i++) {
-      final x = (i * 47.0 + 17) % math.max(size.width, 1);
-      final y = (i * 31.0 + 12) % math.max(size.height * .65, 1);
-      canvas.drawCircle(Offset(x, y), i.isEven ? 1.8 : 1.1, starPaint);
+    final clef = TextPainter(
+      text: const TextSpan(
+        text: '𝄞',
+        style: TextStyle(color: Color(0xFFD9C5FF), fontSize: 48, height: 1),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    clef.paint(canvas, Offset(2, top - 10));
+
+    final bottomLine = top + (spacing * 4);
+    final y = bottomLine - ((pitchIndex - 2) * spacing / 2);
+    final x = left + ((right - left) * .62);
+    final note = Paint()..color = color;
+    canvas.save();
+    canvas.translate(x, y);
+    canvas.rotate(-.2);
+    canvas.drawOval(const Rect.fromLTWH(-10, -6, 20, 12), note);
+    canvas.restore();
+    canvas.drawLine(
+        Offset(x + 9, y), Offset(x + 9, y - 27), note..strokeWidth = 2.5);
+    if (pitchIndex == 0) {
+      canvas.drawLine(Offset(x - 14, y), Offset(x + 14, y), line);
     }
+    final symbol = TextPainter(
+      text: TextSpan(
+        text: figure.symbol,
+        style:
+            TextStyle(color: color, fontSize: 24, fontWeight: FontWeight.w800),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    symbol.paint(canvas, Offset(size.width - symbol.width - 8, 3));
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _MiniStaffPainter oldDelegate) =>
+      oldDelegate.pitchIndex != pitchIndex || oldDelegate.figure != figure;
+}
+
+class _ReferenceStaffPainter extends CustomPainter {
+  const _ReferenceStaffPainter(this.pitches);
+  final List<_Pitch> pitches;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final lineSpacing = math.min(58.0, (size.height - 38) / 5.0);
+    final bottomLine = size.height - lineSpacing - 18;
+    final paint = Paint()
+      ..color = Colors.white.withValues(alpha: .22)
+      ..strokeWidth = 1.1;
+    for (var i = 0; i < 5; i++) {
+      final y = bottomLine - (i * lineSpacing);
+      canvas.drawLine(Offset(0, y), Offset(size.width - 2, y), paint);
+    }
+    final clef = TextPainter(
+      text: const TextSpan(
+        text: '𝄞',
+        style: TextStyle(color: Color(0xFFBCA0EE), fontSize: 34, height: 1),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    clef.paint(canvas, Offset(0, bottomLine - (lineSpacing * 3.8)));
+    final cY = bottomLine + lineSpacing;
+    canvas.drawLine(Offset(4, cY), Offset(size.width - 4, cY), paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ReferenceStaffPainter oldDelegate) => false;
 }

@@ -21,8 +21,14 @@ void main() {
       const MaterialApp(home: RhythmGameScreen()),
     );
 
-    expect(find.text('Salto musical'), findsOneWidget);
-    expect(find.text('MANTÉN PARA SALTAR'), findsOneWidget);
+    expect(find.text('Pentagrama Balam'), findsOneWidget);
+    expect(find.text('DO'), findsOneWidget);
+    expect(find.text('RE'), findsOneWidget);
+    expect(find.text('MI'), findsOneWidget);
+    expect(find.text('FA'), findsOneWidget);
+    expect(find.text('SOL'), findsOneWidget);
+    expect(find.text('LA'), findsOneWidget);
+    expect(find.text('SI'), findsOneWidget);
 
     await tester.tap(find.byTooltip('Cómo jugar'));
     await tester.pumpAndSettle();
