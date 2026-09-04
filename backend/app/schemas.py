@@ -121,3 +121,18 @@ class BookingResponse(BaseModel):
     start_time: time
     end_time: time
     created_at: datetime
+
+
+class ChatMessageCreate(BaseModel):
+    text: str = Field(min_length=1, max_length=1500)
+
+
+class ChatMessageResponse(BaseModel):
+    id: int
+    booking_id: int
+    sender_user_id: int
+    sender_role: UserRole
+    sender_name: str
+    text: str
+    created_at: datetime
+    mine: bool

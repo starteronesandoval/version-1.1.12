@@ -114,6 +114,22 @@ class Booking(Base):
     )
     musician: Mapped[MusicianProfile] = relationship(back_populates="bookings")
     client: Mapped[ClientProfile] = relationship(back_populates="bookings")
+    messages: Mapped[list["ChatMessage"]] = relationship(
+        back_populates="booking", cascade="all, delete-orphan"
+    )
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    booking_id: Mapped[int] = mapped_column(ForeignKey("bookings.id"), index=True)
+    sender_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    text: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
+    booking: Mapped[Booking] = relationship(back_populates="messages")
+    sender: Mapped[User] = relationship()
 
 
 class ClientAvatar(Base):

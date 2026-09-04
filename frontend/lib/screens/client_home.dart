@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../api_service.dart';
+import '../widgets/booking_chat_sheet.dart';
 import '../widgets/glass_ui.dart';
 
 class ClientHome extends StatefulWidget {
@@ -19,6 +20,7 @@ class _ClientHomeState extends State<ClientHome> {
   final search = TextEditingController();
   final picker = ImagePicker();
   List<dynamic> results = [];
+  List<dynamic> bookings = [];
   Map<String, dynamic>? clientProfile;
   bool loading = true;
   Timer? debounce;
@@ -28,6 +30,7 @@ class _ClientHomeState extends State<ClientHome> {
     super.initState();
     load();
     loadClientProfile();
+    loadClientBookings();
   }
 
   Future<void> load() async {
@@ -47,6 +50,19 @@ class _ClientHomeState extends State<ClientHome> {
       if (mounted) setState(() {});
     } on ApiException catch (error) {
       if (error.statusCode != 404 && mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    }
+  }
+
+  Future<void> loadClientBookings() async {
+    try {
+      bookings =
+          await widget.api.get('/api/clients/me/bookings') as List<dynamic>;
+      if (mounted) setState(() {});
+    } on ApiException catch (error) {
+      if (error.statusCode != 409 && mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(error.message)));
       }
@@ -73,6 +89,13 @@ class _ClientHomeState extends State<ClientHome> {
                     style: TextStyle(fontSize: 12, color: Color(0xFFC8B5EE))),
               ]),
           actions: [
+            IconButton(
+                tooltip: 'Mis contratos y chats',
+                onPressed: () => _contractsSheet(context),
+                icon: Badge(
+                    isLabelVisible: bookings.isNotEmpty,
+                    label: Text('${bookings.length}'),
+                    child: const Icon(Icons.forum_outlined))),
             IconButton(
                 onPressed: () => _profileSheet(context), icon: _smallAvatar()),
             IconButton(
@@ -380,6 +403,8 @@ class _ClientHomeState extends State<ClientHome> {
                                         '/api/musicians/${band['id']}/availability?date=${_dateKey(selected)}')
                                     as Map<String, dynamic>;
                                 if (!sheetContext.mounted) return;
+                                bookings = [...bookings, response];
+                                if (mounted) setState(() {});
                                 setSheetState(() {
                                   availability = response;
                                   checking = false;
@@ -616,6 +641,21 @@ class _ClientHomeState extends State<ClientHome> {
                             '${band['group_name']} recibió los datos de tu evento.',
                             textAlign: TextAlign.center,
                           ),
+                          const SizedBox(height: 12),
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              final confirmed = bookingResult!;
+                              Navigator.pop(sheetContext);
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (mounted) {
+                                  showBookingChat(context,
+                                      api: widget.api, booking: confirmed);
+                                }
+                              });
+                            },
+                            icon: const Icon(Icons.forum_outlined),
+                            label: const Text('Abrir chat del evento'),
+                          ),
                         ]),
                       ),
                     ],
@@ -628,6 +668,96 @@ class _ClientHomeState extends State<ClientHome> {
       ),
     );
     venue.dispose();
+  }
+
+  String _bookingTime(dynamic value) {
+    final text = value.toString();
+    return text.length >= 5 ? text.substring(0, 5) : text;
+  }
+
+  Future<void> _contractsSheet(BuildContext context) async {
+    await loadClientBookings();
+    if (!context.mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1C1235),
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 4, 18, 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('Mis contratos',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 6),
+              Text('Entra al chat privado de cada evento.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white.withValues(alpha: .62))),
+              const SizedBox(height: 16),
+              if (bookings.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 28),
+                  child: Text('Todavía no tienes fechas contratadas.',
+                      textAlign: TextAlign.center),
+                )
+              else
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: bookings.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (_, index) {
+                      final item = bookings[index] as Map<String, dynamic>;
+                      return Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: .08),
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(item['group_name'].toString(),
+                                style: const TextStyle(
+                                    fontSize: 17, fontWeight: FontWeight.w800)),
+                            const SizedBox(height: 5),
+                            Text(
+                              '${_formatDate(DateTime.parse(item['event_date']))} · '
+                              '${_bookingTime(item['start_time'])}–${_bookingTime(item['end_time'])}',
+                              style: const TextStyle(color: Color(0xFF68DDCD)),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(item['venue'].toString()),
+                            const SizedBox(height: 10),
+                            FilledButton.tonalIcon(
+                              onPressed: () {
+                                Navigator.pop(sheetContext);
+                                WidgetsBinding.instance
+                                    .addPostFrameCallback((_) {
+                                  if (mounted) {
+                                    showBookingChat(this.context,
+                                        api: widget.api, booking: item);
+                                  }
+                                });
+                              },
+                              icon: const Icon(Icons.forum_outlined),
+                              label: const Text('Abrir chat'),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _miniStat(String value, String label) => Column(children: [

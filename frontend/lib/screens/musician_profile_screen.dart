@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../api_service.dart';
+import '../widgets/booking_chat_sheet.dart';
 import '../widgets/glass_ui.dart';
 
 class MusicianProfileScreen extends StatefulWidget {
@@ -514,6 +515,16 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
                                 '${item['client_name']} · ${item['client_email']}'),
                           ),
                         ]),
+                        const SizedBox(height: 10),
+                        FilledButton.tonalIcon(
+                          onPressed: () => showBookingChat(
+                            context,
+                            api: widget.api,
+                            booking: item,
+                          ),
+                          icon: const Icon(Icons.forum_outlined),
+                          label: const Text('Chat del evento'),
+                        ),
                       ],
                     ),
                   ),

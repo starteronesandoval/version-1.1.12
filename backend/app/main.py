@@ -14,11 +14,12 @@ from sqlalchemy.orm import Session, selectinload
 from .auth import create_token, current_user, hash_password, require_role, verify_password
 from .config import settings
 from .database import Base, engine, get_db
-from .models import (AvatarChoice, Booking, ClientAvatar, ClientProfile, Media,
-                     MediaType, MusicianBusyDate, MusicianProfile, User,
-                     UserRole)
+from .models import (AvatarChoice, Booking, ChatMessage, ClientAvatar,
+                     ClientProfile, Media, MediaType, MusicianBusyDate,
+                     MusicianProfile, User, UserRole)
 from .schemas import (AvailabilityResponse, AvatarChoiceUpdate, BookingCreate,
                       BookingResponse, BusyDateResponse, BusyDateUpdate,
+                      ChatMessageCreate, ChatMessageResponse,
                       ClientProfileResponse, ClientProfileUpsert, LoginRequest,
                       MusicianProfileResponse, MusicianProfileUpsert,
                       RegisterRequest, TokenResponse, UserResponse)
@@ -103,6 +104,37 @@ def booking_out(booking: Booking) -> BookingResponse:
         start_time=booking.start_time,
         end_time=booking.end_time,
         created_at=booking.created_at,
+    )
+
+
+def accessible_booking(booking_id: int, user: User, db: Session) -> Booking:
+    booking = db.scalar(booking_query().where(Booking.id == booking_id))
+    if not booking:
+        raise HTTPException(404, "Contratación no encontrada")
+    participant = (
+        booking.client.user_id == user.id
+        or booking.musician.user_id == user.id
+    )
+    if not participant:
+        raise HTTPException(403, "Este chat pertenece a otra contratación")
+    return booking
+
+
+def chat_message_out(
+    message: ChatMessage, booking: Booking, viewer: User
+) -> ChatMessageResponse:
+    sent_by_client = message.sender_user_id == booking.client.user_id
+    return ChatMessageResponse(
+        id=message.id,
+        booking_id=message.booking_id,
+        sender_user_id=message.sender_user_id,
+        sender_role=UserRole.client if sent_by_client else UserRole.musician,
+        sender_name=(
+            booking.client.name if sent_by_client else booking.musician.group_name
+        ),
+        text=message.text,
+        created_at=message.created_at,
+        mine=message.sender_user_id == viewer.id,
     )
 
 
@@ -406,6 +438,70 @@ def get_my_bookings(
         .order_by(Booking.event_date, Booking.start_time)
     ).all()
     return [booking_out(item) for item in bookings]
+
+
+@app.get(
+    "/api/clients/me/bookings",
+    response_model=list[BookingResponse],
+)
+def get_client_bookings(
+    user: User = Depends(require_role(UserRole.client)),
+    db: Session = Depends(get_db),
+):
+    profile = db.scalar(
+        select(ClientProfile).where(ClientProfile.user_id == user.id)
+    )
+    if not profile:
+        raise HTTPException(409, "Crea primero tu perfil de cliente")
+    bookings = db.scalars(
+        booking_query()
+        .where(Booking.client_id == profile.id)
+        .order_by(Booking.event_date, Booking.start_time)
+    ).all()
+    return [booking_out(item) for item in bookings]
+
+
+@app.get(
+    "/api/bookings/{booking_id}/messages",
+    response_model=list[ChatMessageResponse],
+)
+def get_booking_messages(
+    booking_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    booking = accessible_booking(booking_id, user, db)
+    messages = db.scalars(
+        select(ChatMessage)
+        .where(ChatMessage.booking_id == booking.id)
+        .order_by(ChatMessage.created_at, ChatMessage.id)
+    ).all()
+    return [chat_message_out(item, booking, user) for item in messages]
+
+
+@app.post(
+    "/api/bookings/{booking_id}/messages",
+    response_model=ChatMessageResponse,
+    status_code=201,
+)
+def send_booking_message(
+    booking_id: int,
+    data: ChatMessageCreate,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    booking = accessible_booking(booking_id, user, db)
+    message = ChatMessage(
+        booking_id=booking.id,
+        sender_user_id=user.id,
+        text=data.text.strip(),
+    )
+    if not message.text:
+        raise HTTPException(422, "Escribe un mensaje")
+    db.add(message)
+    db.commit()
+    db.refresh(message)
+    return chat_message_out(message, booking, user)
 
 
 @app.post("/api/musicians/me/media", status_code=201)
