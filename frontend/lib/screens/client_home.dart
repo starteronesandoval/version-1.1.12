@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import '../api_service.dart';
 import '../widgets/booking_chat_sheet.dart';
 import '../widgets/glass_ui.dart';
+import 'rhythm_game_screen.dart';
 
 class ClientHome extends StatefulWidget {
   const ClientHome({super.key, required this.api, required this.onLogout});
@@ -89,6 +90,11 @@ class _ClientHomeState extends State<ClientHome> {
                     style: TextStyle(fontSize: 12, color: Color(0xFFC8B5EE))),
               ]),
           actions: [
+            IconButton(
+                tooltip: 'Salto musical',
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => const RhythmGameScreen())),
+                icon: const Icon(Icons.sports_esports_rounded)),
             IconButton(
                 tooltip: 'Mis contratos y chats',
                 onPressed: () => _contractsSheet(context),

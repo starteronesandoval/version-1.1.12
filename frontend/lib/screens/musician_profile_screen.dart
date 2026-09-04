@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import '../api_service.dart';
 import '../widgets/booking_chat_sheet.dart';
 import '../widgets/glass_ui.dart';
+import 'rhythm_game_screen.dart';
 
 class MusicianProfileScreen extends StatefulWidget {
   const MusicianProfileScreen(
@@ -334,6 +335,11 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
           backgroundColor: Colors.transparent,
           title: const Text('Mi espacio'),
           actions: [
+            IconButton(
+                tooltip: 'Salto musical',
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => const RhythmGameScreen())),
+                icon: const Icon(Icons.sports_esports_rounded)),
             if (profile != null && !editing)
               IconButton(
                   onPressed: () => setState(() => editing = true),
