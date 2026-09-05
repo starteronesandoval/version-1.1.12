@@ -65,6 +65,16 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(error.message)));
       }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No se pudo conectar con Balam. Verifica que el servidor esté encendido.',
+            ),
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => loading = false);
     }

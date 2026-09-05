@@ -17,6 +17,7 @@ class ApiService {
   ApiService({String? baseUrl}) : baseUrl = baseUrl ?? _defaultBaseUrl();
   final String baseUrl;
   final _storage = const FlutterSecureStorage();
+  static const requestTimeout = Duration(seconds: 12);
 
   static String _defaultBaseUrl() {
     if (kIsWeb) return 'http://127.0.0.1:8000';
@@ -74,26 +75,30 @@ class ApiService {
     String password,
     String selectedRole,
   ) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/api/auth/register'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'email': email,
-        'password': password,
-        'role': selectedRole,
-      }),
-    );
+    final response = await http
+        .post(
+          Uri.parse('$baseUrl/api/auth/register'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'email': email,
+            'password': password,
+            'role': selectedRole,
+          }),
+        )
+        .timeout(requestTimeout);
     final body = _decode(response) as Map<String, dynamic>;
     await _storage.write(key: 'token', value: body['access_token'] as String);
     await _storage.write(key: 'role', value: selectedRole);
   }
 
   Future<void> login(String email, String password) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/api/auth/login'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'email': email, 'password': password}),
-    );
+    final response = await http
+        .post(
+          Uri.parse('$baseUrl/api/auth/login'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'email': email, 'password': password}),
+        )
+        .timeout(requestTimeout);
     final body = _decode(response) as Map<String, dynamic>;
     await _storage.write(key: 'token', value: body['access_token'] as String);
     try {
@@ -109,21 +114,27 @@ class ApiService {
   Future<void> logout() => _storage.deleteAll();
 
   Future<dynamic> get(String path) async => _decode(
-        await http.get(Uri.parse('$baseUrl$path'), headers: await _headers()),
+        await http
+            .get(Uri.parse('$baseUrl$path'), headers: await _headers())
+            .timeout(requestTimeout),
       );
   Future<dynamic> post(String path, Map<String, dynamic> data) async => _decode(
-        await http.post(
-          Uri.parse('$baseUrl$path'),
-          headers: await _headers(),
-          body: jsonEncode(data),
-        ),
+        await http
+            .post(
+              Uri.parse('$baseUrl$path'),
+              headers: await _headers(),
+              body: jsonEncode(data),
+            )
+            .timeout(requestTimeout),
       );
   Future<dynamic> put(String path, Map<String, dynamic> data) async => _decode(
-        await http.put(
-          Uri.parse('$baseUrl$path'),
-          headers: await _headers(),
-          body: jsonEncode(data),
-        ),
+        await http
+            .put(
+              Uri.parse('$baseUrl$path'),
+              headers: await _headers(),
+              body: jsonEncode(data),
+            )
+            .timeout(requestTimeout),
       );
 
   Future<void> uploadMedia(File file, String type, int position) async {
@@ -136,7 +147,8 @@ class ApiService {
     final value = await token;
     request.headers['Authorization'] = 'Bearer $value';
     request.files.add(await http.MultipartFile.fromPath('file', file.path));
-    final response = await http.Response.fromStream(await request.send());
+    final response = await http.Response.fromStream(
+        await request.send().timeout(requestTimeout));
     _decode(response);
   }
 
@@ -148,7 +160,8 @@ class ApiService {
     final value = await token;
     request.headers['Authorization'] = 'Bearer $value';
     request.files.add(await http.MultipartFile.fromPath('file', file.path));
-    _decode(await http.Response.fromStream(await request.send()));
+    _decode(await http.Response.fromStream(
+        await request.send().timeout(requestTimeout)));
   }
 
   Future<void> setAvatarPreset(String preset, String color) async {

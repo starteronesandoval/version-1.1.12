@@ -66,6 +66,9 @@ class MusicianProfile(Base):
     bookings: Mapped[list["Booking"]] = relationship(
         back_populates="musician", cascade="all, delete-orphan"
     )
+    reviews: Mapped[list["BookingReview"]] = relationship(
+        back_populates="musician", cascade="all, delete-orphan"
+    )
 
 
 class MusicianBusyDate(Base):
@@ -117,6 +120,30 @@ class Booking(Base):
     messages: Mapped[list["ChatMessage"]] = relationship(
         back_populates="booking", cascade="all, delete-orphan"
     )
+    review: Mapped["BookingReview | None"] = relationship(
+        back_populates="booking", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class BookingReview(Base):
+    __tablename__ = "booking_reviews"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    booking_id: Mapped[int] = mapped_column(ForeignKey("bookings.id"), unique=True, index=True)
+    musician_id: Mapped[int] = mapped_column(ForeignKey("musician_profiles.id"), index=True)
+    agreed_duration: Mapped[float] = mapped_column(Float)
+    punctuality: Mapped[float] = mapped_column(Float)
+    uniform: Mapped[float] = mapped_column(Float)
+    atmosphere: Mapped[float] = mapped_column(Float)
+    kindness: Mapped[float] = mapped_column(Float)
+    song_requests: Mapped[float] = mapped_column(Float)
+    would_hire_again: Mapped[float] = mapped_column(Float)
+    overall_score: Mapped[float] = mapped_column(Float)
+    recommendation: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
+    booking: Mapped[Booking] = relationship(back_populates="review")
+    musician: Mapped[MusicianProfile] = relationship(back_populates="reviews")
 
 
 class ChatMessage(Base):

@@ -1,4 +1,5 @@
 import os
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -136,6 +137,57 @@ def test_full_registration_and_search_flow():
         f"/api/bookings/{booking_id}/messages", headers=stranger_headers
     )
     assert forbidden.status_code == 403
+    early_review = client.post(
+        f"/api/bookings/{booking_id}/review", headers=ch,
+        json={
+            "agreed_duration": 5, "punctuality": 4.5, "uniform": 4,
+            "atmosphere": 5, "kindness": 5, "song_requests": 4.5,
+            "would_hire_again": 5, "recommendation": "Sigan así, gran ambiente.",
+        },
+    )
+    assert early_review.status_code == 403
+    stranger_review = client.post(
+        f"/api/bookings/{booking_id}/review", headers=stranger_headers,
+        json={
+            "agreed_duration": 5, "punctuality": 5, "uniform": 5,
+            "atmosphere": 5, "kindness": 5, "song_requests": 5,
+            "would_hire_again": 5, "recommendation": "Excelente grupo.",
+        },
+    )
+    assert stranger_review.status_code == 403
+    from app.database import SessionLocal
+    from app.models import Booking
+    with SessionLocal() as db:
+        stored_booking = db.get(Booking, booking_id)
+        stored_booking.event_date = date.today() - timedelta(days=1)
+        db.commit()
+    review = client.post(
+        f"/api/bookings/{booking_id}/review", headers=ch,
+        json={
+            "agreed_duration": 5, "punctuality": 4.5, "uniform": 4,
+            "atmosphere": 5, "kindness": 5, "song_requests": 4.5,
+            "would_hire_again": 5, "recommendation": "Sigan así, gran ambiente.",
+        },
+    )
+    assert review.status_code == 201
+    assert review.json()["overall_score"] == 4.77
+    assert client.post(
+        f"/api/bookings/{booking_id}/review", headers=ch,
+        json={
+            "agreed_duration": 5, "punctuality": 5, "uniform": 5,
+            "atmosphere": 5, "kindness": 5, "song_requests": 5,
+            "would_hire_again": 5, "recommendation": "Otra reseña.",
+        },
+    ).status_code == 409
+    reviewed_booking = client.get("/api/clients/me/bookings", headers=ch).json()[0]
+    assert reviewed_booking["can_review"] is False
+    assert reviewed_booking["review_score"] == 4.77
+    public_group = client.get("/api/musicians?q=Valle").json()[0]
+    assert public_group["rating"] == 4.77 and public_group["review_count"] == 1
+    with SessionLocal() as db:
+        stored_booking = db.get(Booking, booking_id)
+        stored_booking.event_date = date(2099, 10, 19)
+        db.commit()
     cannot_release = client.put(
         "/api/musicians/me/busy-dates/2099-10-19",
         headers=mh,

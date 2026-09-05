@@ -15,11 +15,12 @@ from sqlalchemy.orm import Session, selectinload
 from .auth import create_token, current_user, hash_password, require_role, verify_password
 from .config import settings
 from .database import Base, engine, get_db
-from .models import (AvatarChoice, Booking, ChatMessage, ClientAvatar,
+from .models import (AvatarChoice, Booking, BookingReview, ChatMessage, ClientAvatar,
                      ClientProfile, Media, MediaType, MusicianBusyDate,
                      MusicianProfile, User, UserRole)
 from .schemas import (AvailabilityResponse, AvatarChoiceUpdate, BookingCreate,
                       BookingResponse, BusyDateResponse, BusyDateUpdate,
+                      BookingReviewCreate, BookingReviewResponse,
                       ChatMessageCreate, ChatMessageResponse,
                       ClientProfileResponse, ClientProfileUpsert, LoginRequest,
                       MusicianProfileResponse, MusicianProfileUpsert,
@@ -55,6 +56,7 @@ def musician_profiles():
     return select(MusicianProfile).options(
         selectinload(MusicianProfile.media),
         selectinload(MusicianProfile.user).selectinload(User.avatar_choice),
+        selectinload(MusicianProfile.reviews),
     )
 
 
@@ -70,6 +72,9 @@ def musician_out(profile: MusicianProfile) -> MusicianProfileResponse:
         description=profile.description, media=profile.media,
         avatar_preset=choice.preset if choice else "jaguar_guitar",
         avatar_color=choice.color if choice else "#8B5CF6",
+        rating=(round(sum(r.overall_score for r in profile.reviews) / len(profile.reviews), 2)
+                if profile.reviews else None),
+        review_count=len(profile.reviews),
     )
 
 
@@ -89,11 +94,13 @@ def booking_query():
     return select(Booking).options(
         selectinload(Booking.client).selectinload(ClientProfile.user),
         selectinload(Booking.musician),
+        selectinload(Booking.review),
     )
 
 
 def booking_out(booking: Booking) -> BookingResponse:
     chat_active, chat_status = booking_chat_state(booking)
+    can_review, review_status = booking_review_state(booking)
     return BookingResponse(
         id=booking.id,
         musician_id=booking.musician_id,
@@ -108,7 +115,25 @@ def booking_out(booking: Booking) -> BookingResponse:
         created_at=booking.created_at,
         chat_active=chat_active,
         chat_status=chat_status,
+        can_review=can_review,
+        review_status=review_status,
+        review_score=booking.review.overall_score if booking.review else None,
+        event_finished=booking_event_finished(booking),
     )
+
+
+def booking_event_finished(booking: Booking) -> bool:
+    timezone = ZoneInfo(settings.event_timezone)
+    ends_at = datetime.combine(booking.event_date, booking.end_time, tzinfo=timezone)
+    return datetime.now(timezone) >= ends_at
+
+
+def booking_review_state(booking: Booking) -> tuple[bool, str]:
+    if booking.review:
+        return False, "Ya calificaste este evento."
+    if not booking_event_finished(booking):
+        return False, "Podrás calificar justo después de que termine el evento."
+    return True, "Tu opinión ayudará a la agrupación a seguir mejorando."
 
 
 def booking_chat_state(booking: Booking) -> tuple[bool, str]:
@@ -489,6 +514,65 @@ def get_client_bookings(
         .order_by(Booking.event_date, Booking.start_time)
     ).all()
     return [booking_out(item) for item in bookings]
+
+
+@app.post(
+    "/api/bookings/{booking_id}/review",
+    response_model=BookingReviewResponse,
+    status_code=201,
+)
+def create_booking_review(
+    booking_id: int,
+    data: BookingReviewCreate,
+    user: User = Depends(require_role(UserRole.client)),
+    db: Session = Depends(get_db),
+):
+    booking = db.scalar(booking_query().where(Booking.id == booking_id))
+    if not booking:
+        raise HTTPException(404, "Contratación no encontrada")
+    if booking.client.user_id != user.id:
+        raise HTTPException(403, "Sólo el cliente que contrató puede calificar")
+    can_review, status = booking_review_state(booking)
+    if not can_review:
+        raise HTTPException(409 if booking.review else 403, status)
+    recommendation = data.recommendation.strip()
+    if len(recommendation) < 3:
+        raise HTTPException(422, "Deja un consejo o recomendación amable")
+    service_average = sum((
+        data.agreed_duration, data.punctuality, data.uniform,
+        data.atmosphere, data.kindness, data.song_requests,
+    )) / 6
+    overall = round(service_average * 0.70 + data.would_hire_again * 0.30, 2)
+    review = BookingReview(
+        booking_id=booking.id,
+        musician_id=booking.musician_id,
+        overall_score=overall,
+        recommendation=recommendation,
+        **data.model_dump(exclude={"recommendation"}),
+    )
+    db.add(review)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Ya calificaste este evento")
+    db.refresh(review)
+    return review
+
+
+@app.get(
+    "/api/bookings/{booking_id}/review",
+    response_model=BookingReviewResponse,
+)
+def get_booking_review(
+    booking_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    booking = accessible_booking(booking_id, user, db)
+    if not booking.review:
+        raise HTTPException(404, "Este evento aún no tiene calificación")
+    return booking.review
 
 
 @app.get(

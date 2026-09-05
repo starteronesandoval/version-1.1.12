@@ -78,6 +78,8 @@ class MusicianProfileResponse(MusicianProfileUpsert):
     media: list[MediaResponse] = Field(default_factory=list)
     avatar_preset: str = "jaguar_guitar"
     avatar_color: str = "#8B5CF6"
+    rating: float | None = None
+    review_count: int = 0
 
 
 class BusyDateUpdate(BaseModel):
@@ -123,6 +125,42 @@ class BookingResponse(BaseModel):
     created_at: datetime
     chat_active: bool
     chat_status: str
+    can_review: bool
+    review_status: str
+    review_score: float | None = None
+    event_finished: bool
+
+
+class BookingReviewCreate(BaseModel):
+    agreed_duration: float
+    punctuality: float
+    uniform: float
+    atmosphere: float
+    kindness: float
+    song_requests: float
+    would_hire_again: float
+    recommendation: str = Field(min_length=3, max_length=1000)
+
+    @model_validator(mode="after")
+    def validate_stars(self):
+        fields = (
+            "agreed_duration", "punctuality", "uniform", "atmosphere",
+            "kindness", "song_requests", "would_hire_again",
+        )
+        for name in fields:
+            score = getattr(self, name)
+            if score < 0.5 or score > 5 or score * 2 != int(score * 2):
+                raise ValueError("Cada calificación debe ir de 0.5 a 5 en medias estrellas")
+        return self
+
+
+class BookingReviewResponse(BookingReviewCreate):
+    id: int
+    booking_id: int
+    musician_id: int
+    overall_score: float
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ChatMessageCreate(BaseModel):

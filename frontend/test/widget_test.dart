@@ -1,10 +1,25 @@
 import 'package:balam_app/api_service.dart';
+import 'package:balam_app/main.dart';
 import 'package:balam_app/screens/auth_screen.dart';
 import 'package:balam_app/screens/rhythm_game_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+class _BrokenStorageApi extends ApiService {
+  @override
+  Future<String?> get role => Future<String?>.error(Exception('storage'));
+}
+
 void main() {
+  testWidgets('el arranque continúa si falla el almacenamiento seguro',
+      (tester) async {
+    await tester.pumpWidget(BalamApp(api: _BrokenStorageApi()));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byType(AuthScreen), findsOneWidget);
+  });
+
   testWidgets('muestra el registro y las dos modalidades', (tester) async {
     await tester.pumpWidget(
       MaterialApp(home: AuthScreen(api: ApiService(), onSignedIn: (_) {})),

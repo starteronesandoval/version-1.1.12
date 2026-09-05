@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../api_service.dart';
 import '../widgets/booking_chat_sheet.dart';
+import '../widgets/booking_review_sheet.dart';
 import '../widgets/glass_ui.dart';
 import 'rhythm_game_screen.dart';
 
@@ -39,6 +40,13 @@ class _ClientHomeState extends State<ClientHome> {
     try {
       results = await widget.api
           .get('/api/musicians?q=${Uri.encodeQueryComponent(search.text)}');
+    } on ApiException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } catch (_) {
+      _showConnectionError();
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -54,6 +62,8 @@ class _ClientHomeState extends State<ClientHome> {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(error.message)));
       }
+    } catch (_) {
+      _showConnectionError();
     }
   }
 
@@ -67,7 +77,20 @@ class _ClientHomeState extends State<ClientHome> {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(error.message)));
       }
+    } catch (_) {
+      _showConnectionError();
     }
+  }
+
+  void _showConnectionError() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'No se pudo conectar con Balam. Verifica que el servidor esté encendido.',
+        ),
+      ),
+    );
   }
 
   @override
@@ -102,6 +125,15 @@ class _ClientHomeState extends State<ClientHome> {
                     isLabelVisible: bookings.isNotEmpty,
                     label: Text('${bookings.length}'),
                     child: const Icon(Icons.forum_outlined))),
+            IconButton(
+                tooltip: 'Contratos finalizados',
+                onPressed: () => _finishedContractsSheet(context),
+                icon: Badge(
+                    isLabelVisible: bookings.any((item) =>
+                        item is Map && item['event_finished'] == true),
+                    label: Text(
+                        '${bookings.where((item) => item is Map && item['event_finished'] == true).length}'),
+                    child: const Icon(Icons.history_rounded))),
             IconButton(
                 onPressed: () => _profileSheet(context), icon: _smallAvatar()),
             IconButton(
@@ -761,6 +793,189 @@ class _ClientHomeState extends State<ClientHome> {
                                   ? 'Abrir chat'
                                   : 'Disponible durante el evento'),
                             ),
+                            const SizedBox(height: 8),
+                            if (item['can_review'] == true)
+                              FilledButton.icon(
+                                onPressed: () async {
+                                  final result = await showModalBottomSheet<
+                                      Map<String, dynamic>>(
+                                    context: sheetContext,
+                                    isScrollControlled: true,
+                                    backgroundColor: const Color(0xFF1C1235),
+                                    showDragHandle: true,
+                                    builder: (_) => BookingReviewSheet(
+                                      api: widget.api,
+                                      booking: item,
+                                    ),
+                                  );
+                                  if (result != null) {
+                                    item['can_review'] = false;
+                                    item['review_score'] =
+                                        result['overall_score'];
+                                    item['review_status'] =
+                                        'Ya calificaste este evento.';
+                                    if (mounted) setState(() {});
+                                  }
+                                },
+                                icon: const Icon(Icons.star_rounded),
+                                label: const Text('Calificar agrupación'),
+                              )
+                            else
+                              Row(children: [
+                                Icon(
+                                    item['review_score'] != null
+                                        ? Icons.verified_rounded
+                                        : Icons.schedule_rounded,
+                                    size: 18,
+                                    color: const Color(0xFFFFC857)),
+                                const SizedBox(width: 7),
+                                Expanded(
+                                    child: Text(
+                                  item['review_score'] != null
+                                      ? 'Tu calificación: ${item['review_score']} ★'
+                                      : item['review_status'].toString(),
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      color:
+                                          Colors.white.withValues(alpha: .7)),
+                                )),
+                              ]),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _finishedContractsSheet(BuildContext context) async {
+    await loadClientBookings();
+    if (!context.mounted) return;
+    final finished = bookings
+        .where((item) => item is Map && item['event_finished'] == true)
+        .cast<Map<String, dynamic>>()
+        .toList()
+      ..sort((a, b) =>
+          b['event_date'].toString().compareTo(a['event_date'].toString()));
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1C1235),
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 4, 18, 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('Mis contratos finalizados',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 6),
+              Text('Califica la experiencia que viviste con cada agrupación.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white.withValues(alpha: .62))),
+              const SizedBox(height: 16),
+              if (finished.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 28),
+                  child: Text('Aún no tienes eventos finalizados.',
+                      textAlign: TextAlign.center),
+                )
+              else
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: finished.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (_, index) {
+                      final item = finished[index];
+                      return Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: .08),
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                              color: Colors.white.withValues(alpha: .10)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(children: [
+                              const Icon(Icons.event_available_rounded,
+                                  color: Color(0xFF68DDCD)),
+                              const SizedBox(width: 9),
+                              Expanded(
+                                  child: Text(item['group_name'].toString(),
+                                      style: const TextStyle(
+                                          fontSize: 17,
+                                          fontWeight: FontWeight.w800))),
+                            ]),
+                            const SizedBox(height: 8),
+                            Text(
+                                '${_formatDate(DateTime.parse(item['event_date']))} · '
+                                '${_bookingTime(item['start_time'])}–${_bookingTime(item['end_time'])}'),
+                            const SizedBox(height: 4),
+                            Text(item['venue'].toString(),
+                                style: TextStyle(
+                                    color:
+                                        Colors.white.withValues(alpha: .68))),
+                            const SizedBox(height: 14),
+                            if (item['can_review'] == true)
+                              FilledButton.icon(
+                                style: FilledButton.styleFrom(
+                                    minimumSize: const Size.fromHeight(48)),
+                                onPressed: () async {
+                                  final result = await showModalBottomSheet<
+                                      Map<String, dynamic>>(
+                                    context: sheetContext,
+                                    isScrollControlled: true,
+                                    backgroundColor: const Color(0xFF1C1235),
+                                    showDragHandle: true,
+                                    builder: (_) => BookingReviewSheet(
+                                        api: widget.api, booking: item),
+                                  );
+                                  if (result != null) {
+                                    item['can_review'] = false;
+                                    item['review_score'] =
+                                        result['overall_score'];
+                                    await loadClientBookings();
+                                    if (sheetContext.mounted) {
+                                      Navigator.pop(sheetContext);
+                                    }
+                                    if (mounted) {
+                                      _finishedContractsSheet(this.context);
+                                    }
+                                  }
+                                },
+                                icon: const Icon(Icons.star_rounded),
+                                label: const Text('Calificar agrupación'),
+                              )
+                            else
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFFC857)
+                                      .withValues(alpha: .12),
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                child: Text(
+                                  item['review_score'] != null
+                                      ? 'Calificación enviada: ${item['review_score']} ★'
+                                      : item['review_status'].toString(),
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                      color: Color(0xFFFFC857),
+                                      fontWeight: FontWeight.w700),
+                                ),
+                              ),
                           ],
                         ),
                       );
