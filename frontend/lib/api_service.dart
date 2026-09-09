@@ -14,16 +14,37 @@ class ApiException implements Exception {
 }
 
 class ApiService {
-  ApiService({String? baseUrl}) : baseUrl = baseUrl ?? _defaultBaseUrl();
+  ApiService({String? baseUrl})
+      : baseUrl = _normalizeBaseUrl(baseUrl ?? _defaultBaseUrl());
   final String baseUrl;
   final _storage = const FlutterSecureStorage();
   static const requestTimeout = Duration(seconds: 12);
 
   static String _defaultBaseUrl() {
+    const configured = String.fromEnvironment('API_BASE_URL');
+    if (configured.isNotEmpty) return configured;
+    if (kReleaseMode) {
+      throw StateError(
+        'API_BASE_URL es obligatorio en builds de producción. '
+        'Usa --dart-define=API_BASE_URL=https://api.tudominio.com',
+      );
+    }
     if (kIsWeb) return 'http://127.0.0.1:8000';
     return defaultTargetPlatform == TargetPlatform.android
         ? 'http://10.0.2.2:8000'
         : 'http://127.0.0.1:8000';
+  }
+
+  static String _normalizeBaseUrl(String value) {
+    final normalized = value.trim().replaceFirst(RegExp(r'/+$'), '');
+    final uri = Uri.tryParse(normalized);
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
+      throw ArgumentError.value(value, 'baseUrl', 'URL de API inválida');
+    }
+    if (kReleaseMode && uri.scheme != 'https') {
+      throw ArgumentError('La API debe usar HTTPS en producción');
+    }
+    return normalized;
   }
 
   String? mediaUrl(dynamic path) {
@@ -71,16 +92,17 @@ class ApiService {
   }
 
   Future<void> register(
-    String email,
+    String identifier,
     String password,
     String selectedRole,
   ) async {
+    final isEmail = identifier.contains('@');
     final response = await http
         .post(
           Uri.parse('$baseUrl/api/auth/register'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({
-            'email': email,
+            if (isEmail) 'email': identifier else 'phone': identifier,
             'password': password,
             'role': selectedRole,
           }),
@@ -91,12 +113,12 @@ class ApiService {
     await _storage.write(key: 'role', value: selectedRole);
   }
 
-  Future<void> login(String email, String password) async {
+  Future<void> login(String identifier, String password) async {
     final response = await http
         .post(
           Uri.parse('$baseUrl/api/auth/login'),
           headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'email': email, 'password': password}),
+          body: jsonEncode({'identifier': identifier, 'password': password}),
         )
         .timeout(requestTimeout);
     final body = _decode(response) as Map<String, dynamic>;
@@ -113,10 +135,30 @@ class ApiService {
 
   Future<void> logout() => _storage.deleteAll();
 
-  Future<dynamic> get(String path) async => _decode(
+  Future<String?> requestPasswordReset(String identifier) async {
+    final body = await post(
+      '/api/auth/password-reset/request',
+      {'identifier': identifier},
+    ) as Map<String, dynamic>;
+    return body['dev_code'] as String?;
+  }
+
+  Future<void> confirmPasswordReset(
+    String identifier,
+    String code,
+    String newPassword,
+  ) async {
+    await post('/api/auth/password-reset/confirm', {
+      'identifier': identifier,
+      'code': code,
+      'new_password': newPassword,
+    });
+  }
+
+  Future<dynamic> get(String path, {Duration? timeout}) async => _decode(
         await http
             .get(Uri.parse('$baseUrl$path'), headers: await _headers())
-            .timeout(requestTimeout),
+            .timeout(timeout ?? requestTimeout),
       );
   Future<dynamic> post(String path, Map<String, dynamic> data) async => _decode(
         await http

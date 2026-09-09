@@ -25,21 +25,33 @@ class _ClientHomeState extends State<ClientHome> {
   List<dynamic> bookings = [];
   Map<String, dynamic>? clientProfile;
   bool loading = true;
+  bool profileLoading = true;
   Timer? debounce;
 
   @override
   void initState() {
     super.initState();
-    load();
-    loadClientProfile();
-    loadClientBookings();
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    await loadClientProfile();
+    if (clientProfile?['profile_complete'] == true) {
+      await Future.wait([load(), loadClientBookings()]);
+    }
   }
 
   Future<void> load() async {
     if (mounted) setState(() => loading = true);
     try {
-      results = await widget.api
-          .get('/api/musicians?q=${Uri.encodeQueryComponent(search.text)}');
+      final query = Uri(queryParameters: {
+        'q': search.text,
+        if (clientProfile?['city'] != null) 'city': clientProfile!['city'],
+        if (clientProfile?['municipality'] != null)
+          'municipality': clientProfile!['municipality'],
+        if (clientProfile?['state'] != null) 'state': clientProfile!['state'],
+      }).query;
+      results = await widget.api.get('/api/musicians?$query');
     } on ApiException catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -64,6 +76,8 @@ class _ClientHomeState extends State<ClientHome> {
       }
     } catch (_) {
       _showConnectionError();
+    } finally {
+      if (mounted) setState(() => profileLoading = false);
     }
   }
 
@@ -112,93 +126,141 @@ class _ClientHomeState extends State<ClientHome> {
                 Text('música para tu momento',
                     style: TextStyle(fontSize: 12, color: Color(0xFFC8B5EE))),
               ]),
-          actions: [
-            IconButton(
-                tooltip: 'Salto musical',
-                onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) => const RhythmGameScreen())),
-                icon: const Icon(Icons.sports_esports_rounded)),
-            IconButton(
-                tooltip: 'Mis contratos y chats',
-                onPressed: () => _contractsSheet(context),
-                icon: Badge(
-                    isLabelVisible: bookings.isNotEmpty,
-                    label: Text('${bookings.length}'),
-                    child: const Icon(Icons.forum_outlined))),
-            IconButton(
-                tooltip: 'Contratos finalizados',
-                onPressed: () => _finishedContractsSheet(context),
-                icon: Badge(
-                    isLabelVisible: bookings.any((item) =>
-                        item is Map && item['event_finished'] == true),
-                    label: Text(
-                        '${bookings.where((item) => item is Map && item['event_finished'] == true).length}'),
-                    child: const Icon(Icons.history_rounded))),
-            IconButton(
-                onPressed: () => _profileSheet(context), icon: _smallAvatar()),
-            IconButton(
-                onPressed: widget.onLogout, icon: const Icon(Icons.logout)),
-          ],
+          actions: clientProfile?['profile_complete'] == true
+              ? [
+                  IconButton(
+                      tooltip: 'Salto musical',
+                      onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                              builder: (_) => const RhythmGameScreen())),
+                      icon: const Icon(Icons.sports_esports_rounded)),
+                  IconButton(
+                      tooltip: 'Mis contratos y chats',
+                      onPressed: () => _contractsSheet(context),
+                      icon: Badge(
+                          isLabelVisible: bookings.isNotEmpty,
+                          label: Text('${bookings.length}'),
+                          child: const Icon(Icons.forum_outlined))),
+                  IconButton(
+                      tooltip: 'Contratos finalizados',
+                      onPressed: () => _finishedContractsSheet(context),
+                      icon: Badge(
+                          isLabelVisible: bookings.any((item) =>
+                              item is Map && item['event_finished'] == true),
+                          label: Text(
+                              '${bookings.where((item) => item is Map && item['event_finished'] == true).length}'),
+                          child: const Icon(Icons.history_rounded))),
+                  IconButton(
+                      onPressed: () => _profileSheet(context),
+                      icon: _smallAvatar()),
+                  IconButton(
+                      onPressed: widget.onLogout,
+                      icon: const Icon(Icons.logout)),
+                ]
+              : [
+                  IconButton(
+                      onPressed: widget.onLogout,
+                      icon: const Icon(Icons.logout))
+                ],
         ),
         body: GlassBackground(
           child: SafeArea(
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 12),
-                  child: GlassCard(
-                    padding: EdgeInsets.zero,
-                    child: TextField(
-                      controller: search,
-                      onChanged: (_) {
-                        debounce?.cancel();
-                        debounce =
-                            Timer(const Duration(milliseconds: 350), load);
-                      },
-                      decoration: const InputDecoration(
-                        prefixIcon: Icon(Icons.search),
-                        hintText: 'Busca nombre, estilo o tipo de grupo',
-                        border: InputBorder.none,
+            child: profileLoading
+                ? const Center(child: CircularProgressIndicator())
+                : clientProfile?['profile_complete'] != true
+                    ? _completeProfileRequired()
+                    : Column(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(18, 14, 18, 12),
+                            child: GlassCard(
+                              padding: EdgeInsets.zero,
+                              child: TextField(
+                                controller: search,
+                                onChanged: (_) {
+                                  debounce?.cancel();
+                                  debounce = Timer(
+                                      const Duration(milliseconds: 350), load);
+                                },
+                                decoration: const InputDecoration(
+                                  prefixIcon: Icon(Icons.search),
+                                  hintText:
+                                      'Busca nombre, estilo o tipo de grupo',
+                                  border: InputBorder.none,
+                                ),
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            child: Row(children: [
+                              const Expanded(
+                                  child: Text('Agrupaciones disponibles',
+                                      style: TextStyle(
+                                          fontSize: 19,
+                                          fontWeight: FontWeight.w700))),
+                              Text('${results.length}',
+                                  style: const TextStyle(
+                                      color: Color(0xFFBFA1FF),
+                                      fontWeight: FontWeight.w700)),
+                            ]),
+                          ),
+                          const SizedBox(height: 10),
+                          if (loading)
+                            const LinearProgressIndicator(minHeight: 2),
+                          Expanded(
+                            child: results.isEmpty && !loading
+                                ? const Center(
+                                    child:
+                                        Text('Aún no encontramos agrupaciones'))
+                                : ListView.separated(
+                                    padding: const EdgeInsets.fromLTRB(
+                                        18, 6, 18, 100),
+                                    itemCount: results.length,
+                                    separatorBuilder: (_, __) =>
+                                        const SizedBox(height: 14),
+                                    itemBuilder: (_, index) => _bandCard(
+                                        results[index] as Map<String, dynamic>),
+                                  ),
+                          ),
+                        ],
                       ),
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Row(children: [
-                    const Expanded(
-                        child: Text('Agrupaciones disponibles',
-                            style: TextStyle(
-                                fontSize: 19, fontWeight: FontWeight.w700))),
-                    Text('${results.length}',
-                        style: const TextStyle(
-                            color: Color(0xFFBFA1FF),
-                            fontWeight: FontWeight.w700)),
-                  ]),
-                ),
-                const SizedBox(height: 10),
-                if (loading) const LinearProgressIndicator(minHeight: 2),
-                Expanded(
-                  child: results.isEmpty && !loading
-                      ? const Center(
-                          child: Text('Aún no encontramos agrupaciones'))
-                      : ListView.separated(
-                          padding: const EdgeInsets.fromLTRB(18, 6, 18, 100),
-                          itemCount: results.length,
-                          separatorBuilder: (_, __) =>
-                              const SizedBox(height: 14),
-                          itemBuilder: (_, index) =>
-                              _bandCard(results[index] as Map<String, dynamic>),
-                        ),
-                ),
-              ],
-            ),
           ),
         ),
-        floatingActionButton: FloatingActionButton.extended(
-          onPressed: () => _profileSheet(context),
-          icon: const Icon(Icons.person_outline),
-          label: const Text('Mi perfil'),
+        floatingActionButton: clientProfile?['profile_complete'] == true
+            ? FloatingActionButton.extended(
+                onPressed: () => _profileSheet(context),
+                icon: const Icon(Icons.person_outline),
+                label: const Text('Mi perfil'),
+              )
+            : null,
+      );
+
+  Widget _completeProfileRequired() => Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: GlassCard(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.assignment_ind_outlined,
+                  size: 62, color: Color(0xFFBFA1FF)),
+              const SizedBox(height: 16),
+              const Text('Termina tu perfil',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 10),
+              Text(
+                'Antes de explorar y contratar agrupaciones necesitamos tus datos de cliente.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white.withValues(alpha: .70)),
+              ),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: () => _profileSheet(context),
+                icon: const Icon(Icons.arrow_forward_rounded),
+                label: const Text('Completar mi perfil'),
+              ),
+            ]),
+          ),
         ),
       );
 
@@ -209,6 +271,14 @@ class _ClientHomeState extends State<ClientHome> {
         preset: clientProfile?['avatar_preset'] ?? 'jaguar_guitar',
         color: clientProfile?['avatar_color'] ?? '#8B5CF6',
       );
+
+  String _bandLocation(Map<String, dynamic> band) {
+    final parts = [band['city'], band['municipality'], band['state']]
+        .where((value) => value != null && value.toString().trim().isNotEmpty)
+        .map((value) => value.toString())
+        .toList();
+    return parts.isEmpty ? 'Ubicación pendiente' : parts.join(', ');
+  }
 
   Widget _bandCard(Map<String, dynamic> band) {
     final media =
@@ -244,6 +314,38 @@ class _ClientHomeState extends State<ClientHome> {
                     overflow: TextOverflow.ellipsis,
                     style:
                         TextStyle(color: Colors.white.withValues(alpha: .67))),
+                const SizedBox(height: 5),
+                Row(children: [
+                  const Icon(Icons.location_on_outlined,
+                      size: 16, color: Color(0xFF68DDCD)),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      _bandLocation(band),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.white.withValues(alpha: .62)),
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: 7),
+                Row(children: [
+                  Icon(
+                      band['rating'] == null
+                          ? Icons.star_border_rounded
+                          : Icons.star_rounded,
+                      size: 18,
+                      color: const Color(0xFFFFC857)),
+                  const SizedBox(width: 4),
+                  Text(
+                    band['rating'] == null
+                        ? 'Sin calificaciones'
+                        : '${band['rating']} (${band['review_count']})',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ]),
                 const SizedBox(height: 10),
                 Row(children: [
                   const Icon(Icons.payments_outlined,
@@ -299,6 +401,29 @@ class _ClientHomeState extends State<ClientHome> {
               Text('${band['group_type']} · ${band['musical_style']}',
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: Color(0xFFBFA1FF))),
+              const SizedBox(height: 6),
+              Text(
+                _bandLocation(band),
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Color(0xFF68DDCD)),
+              ),
+              const SizedBox(height: 10),
+              Center(
+                child: Chip(
+                  avatar: Icon(
+                    band['rating'] == null
+                        ? Icons.star_border_rounded
+                        : Icons.star_rounded,
+                    color: const Color(0xFFFFC857),
+                  ),
+                  label: Text(
+                    band['rating'] == null
+                        ? 'Aún sin calificaciones'
+                        : '${band['rating']} de 5 · ${band['review_count']} ${band['review_count'] == 1 ? 'calificación' : 'calificaciones'}',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
               const SizedBox(height: 18),
               Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
                 _miniStat('${band['member_count']}', 'Integrantes'),
@@ -1018,13 +1143,18 @@ class _ClientHomeState extends State<ClientHome> {
 
   Future<void> _profileSheet(BuildContext context) async {
     final name = TextEditingController(text: clientProfile?['name'] ?? '');
+    final phone = TextEditingController();
+    final city = TextEditingController(text: clientProfile?['city'] ?? '');
+    final municipality =
+        TextEditingController(text: clientProfile?['municipality'] ?? '');
+    final state = TextEditingController(text: clientProfile?['state'] ?? '');
     final tastes = TextEditingController(
         text: (clientProfile?['musical_tastes'] as List<dynamic>? ?? [])
             .join(', '));
     final favorites = TextEditingController(
         text: (clientProfile?['favorite_groups'] as List<dynamic>? ?? [])
             .join(', '));
-    await showModalBottomSheet(
+    final savedProfile = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
       backgroundColor: const Color(0xFF1C1235),
@@ -1076,6 +1206,37 @@ class _ClientHomeState extends State<ClientHome> {
               decoration: const InputDecoration(
                   labelText: 'Nombre', prefixIcon: Icon(Icons.person_outline))),
           const SizedBox(height: 12),
+          if (clientProfile?['admin_phone_saved'] != true) ...[
+            TextField(
+              controller: phone,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(
+                labelText: 'Número celular',
+                prefixIcon: Icon(Icons.phone_outlined),
+                helperText: 'Privado; sólo para soporte administrativo',
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          TextField(
+            controller: city,
+            decoration: const InputDecoration(
+                labelText: 'Ciudad',
+                prefixIcon: Icon(Icons.location_city_outlined)),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: municipality,
+            decoration: const InputDecoration(
+                labelText: 'Municipio', prefixIcon: Icon(Icons.map_outlined)),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: state,
+            decoration: const InputDecoration(
+                labelText: 'Estado', prefixIcon: Icon(Icons.public_outlined)),
+          ),
+          const SizedBox(height: 12),
           TextField(
               controller: tastes,
               decoration: const InputDecoration(
@@ -1090,18 +1251,37 @@ class _ClientHomeState extends State<ClientHome> {
             style:
                 FilledButton.styleFrom(minimumSize: const Size.fromHeight(54)),
             onPressed: () async {
-              final saved = await widget.api.put('/api/clients/me', {
-                'name': name.text,
-                'musical_tastes': tastes.text.split(','),
-                'favorite_groups': favorites.text.split(','),
-              }) as Map<String, dynamic>;
-              clientProfile = saved;
-              if (!sheetContext.mounted || !mounted) return;
-              Navigator.pop(sheetContext);
-              setState(() {});
-              ScaffoldMessenger.of(this.context).showSnackBar(const SnackBar(
-                  content:
-                      Text('Perfil guardado. Ya puedes agregar tu foto.')));
+              if (clientProfile?['admin_phone_saved'] != true &&
+                  phone.text.trim().isEmpty) {
+                ScaffoldMessenger.of(sheetContext).showSnackBar(const SnackBar(
+                    content: Text('El número celular es obligatorio')));
+                return;
+              }
+              if ([city.text, municipality.text, state.text]
+                  .any((value) => value.trim().length < 2)) {
+                ScaffoldMessenger.of(sheetContext).showSnackBar(const SnackBar(
+                    content: Text('Completa ciudad, municipio y estado')));
+                return;
+              }
+              try {
+                final saved = await widget.api.put('/api/clients/me', {
+                  'name': name.text,
+                  if (phone.text.trim().isNotEmpty)
+                    'admin_phone': phone.text.trim(),
+                  'city': city.text.trim(),
+                  'municipality': municipality.text.trim(),
+                  'state': state.text.trim(),
+                  'musical_tastes': tastes.text.split(','),
+                  'favorite_groups': favorites.text.split(','),
+                }) as Map<String, dynamic>;
+                if (!sheetContext.mounted) return;
+                Navigator.pop(sheetContext, saved);
+              } on ApiException catch (error) {
+                if (sheetContext.mounted) {
+                  ScaffoldMessenger.of(sheetContext)
+                      .showSnackBar(SnackBar(content: Text(error.message)));
+                }
+              }
             },
             icon: const Icon(Icons.auto_awesome),
             label: const Text('Guardar mi perfil'),
@@ -1110,7 +1290,19 @@ class _ClientHomeState extends State<ClientHome> {
       ),
     );
     name.dispose();
+    phone.dispose();
+    city.dispose();
+    municipality.dispose();
+    state.dispose();
     tastes.dispose();
     favorites.dispose();
+    if (savedProfile != null && mounted) {
+      clientProfile = savedProfile;
+      setState(() {});
+      await Future.wait([load(), loadClientBookings()]);
+      if (!mounted) return;
+      ScaffoldMessenger.of(this.context).showSnackBar(const SnackBar(
+          content: Text('Perfil completo. Ya puedes contratar grupos.')));
+    }
   }
 }

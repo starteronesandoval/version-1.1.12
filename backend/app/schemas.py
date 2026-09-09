@@ -6,14 +6,52 @@ from .models import MediaType, UserRole
 
 
 class RegisterRequest(BaseModel):
-    email: EmailStr
+    email: EmailStr | None = None
+    phone: str | None = Field(default=None, min_length=10, max_length=20)
     password: str = Field(min_length=8, max_length=128)
     role: UserRole
 
+    @model_validator(mode="after")
+    def validate_identifier(self):
+        if bool(self.email) == bool(self.phone):
+            raise ValueError("Escribe sólo un correo o un número celular")
+        return self
+
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    identifier: str | None = Field(default=None, min_length=3, max_length=320)
+    email: EmailStr | None = None
     password: str = Field(min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def migrate_email_login(self):
+        self.identifier = self.identifier or (str(self.email) if self.email else None)
+        if not self.identifier:
+            raise ValueError("Escribe tu correo o número celular")
+        return self
+
+
+class PasswordResetRequest(BaseModel):
+    identifier: str = Field(min_length=3, max_length=320)
+
+
+class PasswordResetRequestResponse(BaseModel):
+    message: str
+    dev_code: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class PasswordResetConfirm(BaseModel):
+    identifier: str = Field(min_length=3, max_length=320)
+    code: str = Field(pattern=r"^\d{6}$")
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class RulesAcceptanceResponse(BaseModel):
+    rules_type: str
+    rules_version: str
+    accepted: bool
+    accepted_at: datetime | None = None
+    accepted_group_name: str | None = None
 
 
 class TokenResponse(BaseModel):
@@ -23,7 +61,8 @@ class TokenResponse(BaseModel):
 
 class UserResponse(BaseModel):
     id: int
-    email: EmailStr
+    email: str | None = None
+    phone: str | None = None
     role: UserRole
     is_active: bool
     created_at: datetime
@@ -32,6 +71,10 @@ class UserResponse(BaseModel):
 
 class ClientProfileUpsert(BaseModel):
     name: str = Field(min_length=2, max_length=120)
+    admin_phone: str | None = Field(default=None, min_length=10, max_length=20)
+    city: str | None = Field(default=None, min_length=2, max_length=120)
+    municipality: str | None = Field(default=None, min_length=2, max_length=120)
+    state: str | None = Field(default=None, min_length=2, max_length=120)
     musical_tastes: list[str] = Field(default_factory=list)
     favorite_groups: list[str] = Field(default_factory=list)
 
@@ -42,6 +85,8 @@ class ClientProfileResponse(ClientProfileUpsert):
     avatar_url: str | None = None
     avatar_preset: str = "jaguar_guitar"
     avatar_color: str = "#8B5CF6"
+    profile_complete: bool = False
+    admin_phone_saved: bool = False
 
 
 class AvatarChoiceUpdate(BaseModel):
@@ -51,6 +96,10 @@ class AvatarChoiceUpdate(BaseModel):
 
 class MusicianProfileUpsert(BaseModel):
     contact_name: str = Field(min_length=2, max_length=120)
+    admin_phone: str | None = Field(default=None, min_length=10, max_length=20)
+    city: str | None = Field(default=None, min_length=2, max_length=120)
+    municipality: str | None = Field(default=None, min_length=2, max_length=120)
+    state: str | None = Field(default=None, min_length=2, max_length=120)
     group_name: str = Field(min_length=2, max_length=180)
     group_type: str = Field(min_length=2, max_length=100)
     musical_style: str = Field(min_length=2, max_length=180)
@@ -80,6 +129,8 @@ class MusicianProfileResponse(MusicianProfileUpsert):
     avatar_color: str = "#8B5CF6"
     rating: float | None = None
     review_count: int = 0
+    profile_complete: bool = False
+    admin_phone_saved: bool = False
 
 
 class BusyDateUpdate(BaseModel):
@@ -117,7 +168,7 @@ class BookingResponse(BaseModel):
     group_name: str
     client_id: int
     client_name: str
-    client_email: EmailStr
+    client_email: str
     event_date: date
     venue: str
     start_time: time
@@ -128,7 +179,9 @@ class BookingResponse(BaseModel):
     can_review: bool
     review_status: str
     review_score: float | None = None
+    review_recommendation: str | None = None
     event_finished: bool
+    is_new_sale: bool = False
 
 
 class BookingReviewCreate(BaseModel):

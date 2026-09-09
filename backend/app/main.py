@@ -1,37 +1,74 @@
 import json
-import shutil
-from datetime import date, datetime
+import hashlib
+import hmac
+import logging
+import re
+import secrets
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+import httpx
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import or_, select
+from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from .auth import create_token, current_user, hash_password, require_role, verify_password
 from .config import settings
-from .database import Base, engine, get_db
+from .database import get_db
 from .models import (AvatarChoice, Booking, BookingReview, ChatMessage, ClientAvatar,
                      ClientProfile, Media, MediaType, MusicianBusyDate,
-                     MusicianProfile, User, UserRole)
+                     MusicianProfile, PasswordResetCode, RulesAcceptance,
+                     User, UserRole)
 from .schemas import (AvailabilityResponse, AvatarChoiceUpdate, BookingCreate,
                       BookingResponse, BusyDateResponse, BusyDateUpdate,
                       BookingReviewCreate, BookingReviewResponse,
                       ChatMessageCreate, ChatMessageResponse,
                       ClientProfileResponse, ClientProfileUpsert, LoginRequest,
                       MusicianProfileResponse, MusicianProfileUpsert,
-                      RegisterRequest, TokenResponse, UserResponse)
+                      PasswordResetConfirm, PasswordResetRequest,
+                      PasswordResetRequestResponse, RegisterRequest,
+                      RulesAcceptanceResponse, TokenResponse, UserResponse)
 
-Base.metadata.create_all(bind=engine)
 settings.upload_dir.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title=settings.app_name, version="0.1.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
+app = FastAPI(
+    title=settings.app_name,
+    version="0.2.0",
+    docs_url=None if settings.app_env == "production" else "/docs",
+    redoc_url=None if settings.app_env == "production" else "/redoc",
+)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 app.mount("/uploads", StaticFiles(directory=settings.upload_dir), name="uploads")
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Cache-Control"] = "no-store" if request.url.path.startswith("/api/auth") else "no-cache"
+    if settings.app_env in {"staging", "production"}:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+GROUP_RULES_TYPE = "musician_group_rules"
+GROUP_RULES_VERSION = "GARIBALDY_GROUP_RULES_V1"
+logger = logging.getLogger(__name__)
 
 
 def csv(values: list[str]) -> str:
@@ -43,6 +80,82 @@ def values(raw: str) -> list[str]:
         return json.loads(raw or "[]")
     except json.JSONDecodeError:
         return []
+
+
+def normalize_phone(value: str) -> str:
+    phone = re.sub(r"\D", "", value)
+    if len(phone) < 10 or len(phone) > 15:
+        raise HTTPException(422, "El número celular debe tener entre 10 y 15 dígitos")
+    return phone
+
+
+def find_user(identifier: str, db: Session) -> User | None:
+    value = identifier.strip().lower()
+    if "@" in value:
+        return db.scalar(select(User).where(User.email == value))
+    try:
+        phone = normalize_phone(value)
+    except HTTPException:
+        return None
+    return db.scalar(select(User).where(User.phone == phone))
+
+
+def reset_code_hash(user_id: int, code: str) -> str:
+    return hashlib.sha256(
+        f"{settings.secret_key}:{user_id}:{code}".encode()
+    ).hexdigest()
+
+
+def deliver_password_reset_code(user: User, code: str) -> None:
+    if settings.expose_password_reset_code:
+        return
+    if not settings.password_reset_webhook_url:
+        raise HTTPException(503, "La recuperación de contraseña no está disponible")
+    headers = {"Content-Type": "application/json"}
+    if settings.password_reset_webhook_token:
+        headers["Authorization"] = f"Bearer {settings.password_reset_webhook_token}"
+    try:
+        response = httpx.post(
+            settings.password_reset_webhook_url,
+            headers=headers,
+            json={"email": None if user.phone else user.email, "phone": user.phone, "code": code},
+            timeout=5.0,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, "No pudimos enviar el código de recuperación") from exc
+
+
+CONTENT_TYPE_EXTENSIONS = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "video/mp4": ".mp4",
+    "video/webm": ".webm",
+}
+
+
+def save_upload(file: UploadFile, target: Path, maximum_bytes: int) -> None:
+    written = 0
+    try:
+        with target.open("wb") as output:
+            while chunk := file.file.read(1024 * 1024):
+                written += len(chunk)
+                if written > maximum_bytes:
+                    raise HTTPException(413, "El archivo supera el tamaño permitido")
+                output.write(chunk)
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+
+
+def current_group_rules_acceptance(user_id: int, db: Session):
+    return db.scalar(select(RulesAcceptance).where(
+        RulesAcceptance.user_id == user_id,
+        RulesAcceptance.rules_type == GROUP_RULES_TYPE,
+        RulesAcceptance.rules_version == GROUP_RULES_VERSION,
+        RulesAcceptance.accepted.is_(True),
+    ))
 
 
 def client_profiles():
@@ -64,6 +177,7 @@ def musician_out(profile: MusicianProfile) -> MusicianProfileResponse:
     choice = profile.user.avatar_choice
     return MusicianProfileResponse(
         id=profile.id, user_id=profile.user_id, contact_name=profile.contact_name,
+        city=profile.city, municipality=profile.municipality, state=profile.state,
         group_name=profile.group_name, group_type=profile.group_type,
         musical_style=profile.musical_style, member_count=profile.member_count,
         hourly_rate=profile.hourly_rate, includes_sound=profile.includes_sound,
@@ -75,6 +189,9 @@ def musician_out(profile: MusicianProfile) -> MusicianProfileResponse:
         rating=(round(sum(r.overall_score for r in profile.reviews) / len(profile.reviews), 2)
                 if profile.reviews else None),
         review_count=len(profile.reviews),
+        profile_complete=bool(profile.admin_phone and profile.city
+                              and profile.municipality and profile.state),
+        admin_phone_saved=bool(profile.admin_phone),
     )
 
 
@@ -82,11 +199,15 @@ def client_out(profile: ClientProfile) -> ClientProfileResponse:
     choice = profile.user.avatar_choice
     return ClientProfileResponse(
         id=profile.id, user_id=profile.user_id, name=profile.name,
+        city=profile.city, municipality=profile.municipality, state=profile.state,
         musical_tastes=values(profile.musical_tastes),
         favorite_groups=values(profile.favorite_groups),
         avatar_url=profile.avatar.url if profile.avatar else None,
         avatar_preset=choice.preset if choice else "jaguar_guitar",
         avatar_color=choice.color if choice else "#8B5CF6",
+        profile_complete=bool(profile.admin_phone and profile.city
+                              and profile.municipality and profile.state),
+        admin_phone_saved=bool(profile.admin_phone),
     )
 
 
@@ -98,7 +219,9 @@ def booking_query():
     )
 
 
-def booking_out(booking: Booking) -> BookingResponse:
+def booking_out(
+    booking: Booking, *, include_private_recommendation: bool = False
+) -> BookingResponse:
     chat_active, chat_status = booking_chat_state(booking)
     can_review, review_status = booking_review_state(booking)
     return BookingResponse(
@@ -107,7 +230,7 @@ def booking_out(booking: Booking) -> BookingResponse:
         group_name=booking.musician.group_name,
         client_id=booking.client_id,
         client_name=booking.client.name,
-        client_email=booking.client.user.email,
+        client_email=(booking.client.user.phone or booking.client.user.email),
         event_date=booking.event_date,
         venue=booking.venue,
         start_time=booking.start_time,
@@ -118,7 +241,16 @@ def booking_out(booking: Booking) -> BookingResponse:
         can_review=can_review,
         review_status=review_status,
         review_score=booking.review.overall_score if booking.review else None,
+        review_recommendation=(
+            booking.review.recommendation
+            if booking.review and include_private_recommendation
+            else None
+        ),
         event_finished=booking_event_finished(booking),
+        is_new_sale=(
+            datetime.now(timezone.utc).replace(tzinfo=None) - booking.created_at
+            < timedelta(hours=24)
+        ),
     )
 
 
@@ -169,6 +301,7 @@ def accessible_booking(booking_id: int, user: User, db: Session) -> Booking:
     participant = (
         booking.client.user_id == user.id
         or booking.musician.user_id == user.id
+        or user.role == UserRole.admin
     )
     if not participant:
         raise HTTPException(403, "Este chat pertenece a otra contratación")
@@ -179,13 +312,17 @@ def chat_message_out(
     message: ChatMessage, booking: Booking, viewer: User
 ) -> ChatMessageResponse:
     sent_by_client = message.sender_user_id == booking.client.user_id
+    sent_by_musician = message.sender_user_id == booking.musician.user_id
     return ChatMessageResponse(
         id=message.id,
         booking_id=message.booking_id,
         sender_user_id=message.sender_user_id,
-        sender_role=UserRole.client if sent_by_client else UserRole.musician,
+        sender_role=(UserRole.client if sent_by_client else
+                     UserRole.musician if sent_by_musician else UserRole.admin),
         sender_name=(
-            booking.client.name if sent_by_client else booking.musician.group_name
+            booking.client.name if sent_by_client else
+            booking.musician.group_name if sent_by_musician else
+            "Administración Garibaldy"
         ),
         text=message.text,
         created_at=message.created_at,
@@ -194,32 +331,181 @@ def chat_message_out(
 
 
 @app.get("/health")
-def health():
+def health(db: Session = Depends(get_db)):
+    db.execute(text("SELECT 1"))
     return {"status": "ok"}
 
 
 @app.post("/api/auth/register", response_model=TokenResponse, status_code=201)
 def register(data: RegisterRequest, db: Session = Depends(get_db)):
-    email = str(data.email).strip().lower()
-    if db.scalar(select(User).where(User.email == email)):
+    if data.role == UserRole.admin:
+        raise HTTPException(403, "El rol administrador no admite registro público")
+    phone = normalize_phone(data.phone) if data.phone else None
+    email = str(data.email).strip().lower() if data.email else None
+    if email and db.scalar(select(User).where(User.email == email)):
         raise HTTPException(409, "El correo ya está registrado")
-    user = User(email=email, password_hash=hash_password(data.password), role=data.role)
+    if phone and db.scalar(select(User).where(User.phone == phone)):
+        raise HTTPException(409, "El número celular ya está registrado")
+    stored_email = email or f"phone-{phone}@balam.local"
+    user = User(
+        email=stored_email, phone=phone,
+        password_hash=hash_password(data.password), role=data.role,
+    )
     db.add(user); db.commit(); db.refresh(user)
     return TokenResponse(access_token=create_token(user))
 
 
 @app.post("/api/auth/login", response_model=TokenResponse)
 def login(data: LoginRequest, db: Session = Depends(get_db)):
-    email = str(data.email).strip().lower()
-    user = db.scalar(select(User).where(User.email == email))
+    user = find_user(data.identifier or "", db)
     if not user or not user.is_active or not verify_password(data.password, user.password_hash):
-        raise HTTPException(401, "Correo o contraseña incorrectos")
+        raise HTTPException(401, "Correo, celular o contraseña incorrectos")
     return TokenResponse(access_token=create_token(user))
+
+
+@app.post(
+    "/api/auth/password-reset/request",
+    response_model=PasswordResetRequestResponse,
+)
+def request_password_reset(
+    data: PasswordResetRequest, db: Session = Depends(get_db)
+):
+    user = find_user(data.identifier, db)
+    message = "Si la cuenta existe, generamos un código válido durante 15 minutos."
+    if not user:
+        return PasswordResetRequestResponse(message=message)
+    active_codes = db.scalars(select(PasswordResetCode).where(
+        PasswordResetCode.user_id == user.id,
+        PasswordResetCode.used.is_(False),
+    )).all()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if any(item.created_at > now - timedelta(seconds=60) for item in active_codes):
+        return PasswordResetRequestResponse(message=message)
+    for previous in active_codes:
+        previous.used = True
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    reset = PasswordResetCode(
+        user_id=user.id,
+        code_hash=reset_code_hash(user.id, code),
+        expires_at=now + timedelta(minutes=15),
+    )
+    db.add(reset)
+    db.commit()
+    try:
+        deliver_password_reset_code(user, code)
+    except HTTPException:
+        reset.used = True
+        db.commit()
+        logger.warning("Password reset delivery failed; code invalidated")
+        return PasswordResetRequestResponse(message=message)
+    return PasswordResetRequestResponse(
+        message=message,
+        dev_code=code if settings.expose_password_reset_code else None,
+    )
+
+
+@app.post("/api/auth/password-reset/confirm")
+def confirm_password_reset(
+    data: PasswordResetConfirm, db: Session = Depends(get_db)
+):
+    user = find_user(data.identifier, db)
+    if not user:
+        raise HTTPException(400, "Código inválido o vencido")
+    reset = db.scalar(select(PasswordResetCode).where(
+        PasswordResetCode.user_id == user.id,
+        PasswordResetCode.used.is_(False),
+    ).order_by(PasswordResetCode.created_at.desc()))
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    valid = (
+        reset is not None
+        and reset.expires_at > now
+        and reset.attempts < 5
+        and hmac.compare_digest(reset.code_hash, reset_code_hash(user.id, data.code))
+    )
+    if not valid:
+        if reset:
+            reset.attempts += 1
+            if reset.attempts >= 5:
+                reset.used = True
+            db.commit()
+        raise HTTPException(400, "Código inválido o vencido")
+    user.password_hash = hash_password(data.new_password)
+    reset.used = True
+    db.commit()
+    return {"message": "Tu contraseña fue actualizada correctamente."}
 
 
 @app.get("/api/users/me", response_model=UserResponse)
 def me(user: User = Depends(current_user)):
-    return user
+    return {
+        "id": user.id,
+        "email": None if user.phone else user.email,
+        "phone": user.phone,
+        "role": user.role,
+        "is_active": user.is_active,
+        "created_at": user.created_at,
+    }
+
+
+@app.get("/api/admin/clients")
+def admin_clients(
+    user: User = Depends(require_role(UserRole.admin)),
+    db: Session = Depends(get_db),
+):
+    profiles = db.scalars(client_profiles().order_by(ClientProfile.id.desc())).all()
+    return [{
+        "id": profile.id,
+        "user_id": profile.user_id,
+        "name": profile.name,
+        "account_email": None if profile.user.phone else profile.user.email,
+        "account_phone": profile.user.phone,
+        "admin_phone": profile.admin_phone,
+        "city": profile.city,
+        "municipality": profile.municipality,
+        "state": profile.state,
+        "musical_tastes": values(profile.musical_tastes),
+        "favorite_groups": values(profile.favorite_groups),
+        "is_active": profile.user.is_active,
+        "created_at": profile.user.created_at,
+    } for profile in profiles]
+
+
+@app.get("/api/admin/groups")
+def admin_groups(
+    user: User = Depends(require_role(UserRole.admin)),
+    db: Session = Depends(get_db),
+):
+    profiles = db.scalars(musician_profiles().order_by(MusicianProfile.id.desc())).all()
+    return [{
+        **musician_out(profile).model_dump(),
+        "account_email": None if profile.user.phone else profile.user.email,
+        "account_phone": profile.user.phone,
+        "admin_phone": profile.admin_phone,
+        "is_active": profile.user.is_active,
+        "rules_acceptances": [{
+            "rules_type": acceptance.rules_type,
+            "rules_version": acceptance.rules_version,
+            "accepted": acceptance.accepted,
+            "accepted_at": acceptance.accepted_at,
+            "group_name_snapshot": acceptance.group_name_snapshot,
+        } for acceptance in db.scalars(select(RulesAcceptance).where(
+            RulesAcceptance.user_id == profile.user_id
+        ).order_by(RulesAcceptance.accepted_at.desc())).all()],
+    } for profile in profiles]
+
+
+@app.get("/api/admin/bookings", response_model=list[BookingResponse])
+def admin_bookings(
+    user: User = Depends(require_role(UserRole.admin)),
+    db: Session = Depends(get_db),
+):
+    bookings = db.scalars(
+        booking_query().order_by(Booking.created_at.desc(), Booking.id.desc())
+    ).all()
+    return [
+        booking_out(item, include_private_recommendation=True)
+        for item in bookings
+    ]
 
 
 @app.put("/api/users/me/avatar-preset")
@@ -243,11 +529,18 @@ def set_avatar_preset(data: AvatarChoiceUpdate, user: User = Depends(current_use
     return {"preset": choice.preset, "color": choice.color}
 
 
-@app.put("/api/clients/me", response_model=ClientProfileResponse)
+@app.put("/api/clients/me", response_model=ClientProfileResponse, response_model_exclude_none=True)
 def upsert_client(data: ClientProfileUpsert, user: User = Depends(require_role(UserRole.client)), db: Session = Depends(get_db)):
     profile = db.scalar(client_profiles().where(ClientProfile.user_id == user.id))
-    payload = data.model_dump(exclude={"musical_tastes", "favorite_groups"})
+    if not profile and not data.admin_phone:
+        raise HTTPException(422, "El número celular es obligatorio para completar tu perfil")
+    if not all((data.city, data.municipality, data.state)):
+        raise HTTPException(422, "Completa ciudad, municipio y estado")
+    admin_phone = normalize_phone(data.admin_phone) if data.admin_phone else None
+    payload = data.model_dump(exclude={"musical_tastes", "favorite_groups", "admin_phone"})
     payload.update(musical_tastes=csv(data.musical_tastes), favorite_groups=csv(data.favorite_groups))
+    if admin_phone:
+        payload["admin_phone"] = admin_phone
     if profile:
         for key, value in payload.items(): setattr(profile, key, value)
     else:
@@ -257,7 +550,7 @@ def upsert_client(data: ClientProfileUpsert, user: User = Depends(require_role(U
     return client_out(profile)
 
 
-@app.get("/api/clients/me", response_model=ClientProfileResponse)
+@app.get("/api/clients/me", response_model=ClientProfileResponse, response_model_exclude_none=True)
 def get_client(user: User = Depends(require_role(UserRole.client)), db: Session = Depends(get_db)):
     profile = db.scalar(client_profiles().where(ClientProfile.user_id == user.id))
     if not profile: raise HTTPException(404, "Completa tu perfil")
@@ -269,12 +562,12 @@ def upload_client_avatar(file: UploadFile = File(...),
                          user: User = Depends(require_role(UserRole.client)), db: Session = Depends(get_db)):
     profile = db.scalar(client_profiles().where(ClientProfile.user_id == user.id))
     if not profile: raise HTTPException(409, "Crea primero tu perfil de cliente")
-    if not file.content_type or not file.content_type.startswith("image/"):
+    if file.content_type not in {"image/jpeg", "image/png", "image/webp"}:
         raise HTTPException(415, "La foto de perfil debe ser una imagen")
-    extension = Path(file.filename or "").suffix.lower() or ".jpg"
+    extension = CONTENT_TYPE_EXTENSIONS[file.content_type]
     folder = settings.upload_dir / "clients" / str(profile.id); folder.mkdir(parents=True, exist_ok=True)
     target = folder / f"avatar-{uuid4().hex}{extension}"
-    with target.open("wb") as output: shutil.copyfileobj(file.file, output)
+    save_upload(file, target, settings.max_image_bytes)
     public_url = f"/uploads/clients/{profile.id}/{target.name}"
     if profile.avatar:
         old = settings.upload_dir / "clients" / str(profile.id) / Path(profile.avatar.url).name
@@ -286,24 +579,103 @@ def upload_client_avatar(file: UploadFile = File(...),
     return {"url": public_url}
 
 
-@app.put("/api/musicians/me", response_model=MusicianProfileResponse)
+@app.put("/api/musicians/me", response_model=MusicianProfileResponse, response_model_exclude_none=True)
 def upsert_musician(data: MusicianProfileUpsert, user: User = Depends(require_role(UserRole.musician)), db: Session = Depends(get_db)):
+    if not current_group_rules_acceptance(user.id, db):
+        raise HTTPException(
+            403, "Debes aceptar las Reglas para Agrupaciones antes de continuar"
+        )
     profile = db.scalar(select(MusicianProfile).where(MusicianProfile.user_id == user.id))
-    payload = data.model_dump(exclude={"equipment_brands"}); payload["equipment_brands"] = csv(data.equipment_brands)
+    if not profile and not data.admin_phone:
+        raise HTTPException(422, "El número celular es obligatorio para completar tu perfil")
+    if not all((data.city, data.municipality, data.state)):
+        raise HTTPException(422, "Completa ciudad, municipio y estado")
+    admin_phone = normalize_phone(data.admin_phone) if data.admin_phone else None
+    payload = data.model_dump(exclude={"equipment_brands", "admin_phone"}); payload["equipment_brands"] = csv(data.equipment_brands)
+    if admin_phone:
+        payload["admin_phone"] = admin_phone
     if profile:
         for key, value in payload.items(): setattr(profile, key, value)
     else:
         profile = MusicianProfile(user_id=user.id, **payload); db.add(profile)
+    acceptance = current_group_rules_acceptance(user.id, db)
+    if acceptance:
+        acceptance.group_name_snapshot = data.group_name.strip()
     db.commit()
     profile = db.scalar(musician_profiles().where(MusicianProfile.user_id == user.id))
     return musician_out(profile)
 
 
-@app.get("/api/musicians/me", response_model=MusicianProfileResponse)
+@app.get("/api/musicians/me", response_model=MusicianProfileResponse, response_model_exclude_none=True)
 def get_musician(user: User = Depends(require_role(UserRole.musician)), db: Session = Depends(get_db)):
     profile = db.scalar(musician_profiles().where(MusicianProfile.user_id == user.id))
     if not profile: raise HTTPException(404, "Completa tu perfil")
     return musician_out(profile)
+
+
+@app.get(
+    "/api/musicians/me/rules",
+    response_model=RulesAcceptanceResponse,
+)
+def get_group_rules_status(
+    user: User = Depends(require_role(UserRole.musician)),
+    db: Session = Depends(get_db),
+):
+    acceptance = current_group_rules_acceptance(user.id, db)
+    profile = db.scalar(select(MusicianProfile).where(
+        MusicianProfile.user_id == user.id
+    ))
+    return RulesAcceptanceResponse(
+        rules_type=GROUP_RULES_TYPE,
+        rules_version=GROUP_RULES_VERSION,
+        accepted=acceptance is not None,
+        accepted_at=acceptance.accepted_at if acceptance else None,
+        accepted_group_name=(
+            acceptance.group_name_snapshot if acceptance
+            else profile.group_name if profile else None
+        ),
+    )
+
+
+@app.post(
+    "/api/musicians/me/rules/accept",
+    response_model=RulesAcceptanceResponse,
+)
+def accept_group_rules(
+    user: User = Depends(require_role(UserRole.musician)),
+    db: Session = Depends(get_db),
+):
+    acceptance = current_group_rules_acceptance(user.id, db)
+    profile = db.scalar(select(MusicianProfile).where(
+        MusicianProfile.user_id == user.id
+    ))
+    if not acceptance:
+        acceptance = RulesAcceptance(
+            user_id=user.id,
+            rules_type=GROUP_RULES_TYPE,
+            rules_version=GROUP_RULES_VERSION,
+            group_name_snapshot=profile.group_name if profile else None,
+            accepted=True,
+        )
+        db.add(acceptance)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            acceptance = current_group_rules_acceptance(user.id, db)
+        else:
+            db.refresh(acceptance)
+    elif profile and not acceptance.group_name_snapshot:
+        acceptance.group_name_snapshot = profile.group_name
+        db.commit()
+        db.refresh(acceptance)
+    return RulesAcceptanceResponse(
+        rules_type=GROUP_RULES_TYPE,
+        rules_version=GROUP_RULES_VERSION,
+        accepted=True,
+        accepted_at=acceptance.accepted_at,
+        accepted_group_name=acceptance.group_name_snapshot,
+    )
 
 
 @app.get("/api/musicians/me/busy-dates", response_model=list[BusyDateResponse])
@@ -369,9 +741,11 @@ def set_my_busy_date(
     return BusyDateResponse(date=selected_date, busy=data.busy)
 
 
-@app.get("/api/musicians", response_model=list[MusicianProfileResponse])
+@app.get("/api/musicians", response_model=list[MusicianProfileResponse], response_model_exclude_none=True)
 def search_musicians(q: str = "", group_type: str | None = None, musical_style: str | None = None,
                      max_hourly_rate: float | None = Query(None, ge=0), includes_sound: bool | None = None,
+                     city: str | None = None, municipality: str | None = None,
+                     state: str | None = None,
                      skip: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
     stmt = musician_profiles()
     if q:
@@ -380,10 +754,17 @@ def search_musicians(q: str = "", group_type: str | None = None, musical_style: 
     if musical_style: stmt = stmt.where(MusicianProfile.musical_style.ilike(f"%{musical_style}%"))
     if max_hourly_rate is not None: stmt = stmt.where(MusicianProfile.hourly_rate <= max_hourly_rate)
     if includes_sound is not None: stmt = stmt.where(MusicianProfile.includes_sound == includes_sound)
+    if city or municipality or state:
+        stmt = stmt.order_by(case(
+            (func.lower(MusicianProfile.municipality) == (municipality or "").lower(), 0),
+            (func.lower(MusicianProfile.city) == (city or "").lower(), 1),
+            (func.lower(MusicianProfile.state) == (state or "").lower(), 2),
+            else_=3,
+        ))
     return [musician_out(p) for p in db.scalars(stmt.offset(skip).limit(limit)).all()]
 
 
-@app.get("/api/musicians/{musician_id}", response_model=MusicianProfileResponse)
+@app.get("/api/musicians/{musician_id}", response_model=MusicianProfileResponse, response_model_exclude_none=True)
 def musician_detail(musician_id: int, db: Session = Depends(get_db)):
     profile = db.scalar(musician_profiles().where(MusicianProfile.id == musician_id))
     if not profile: raise HTTPException(404, "Agrupación no encontrada")
@@ -433,8 +814,10 @@ def create_booking(
     client = db.scalar(
         select(ClientProfile).where(ClientProfile.user_id == user.id)
     )
-    if not client:
-        raise HTTPException(409, "Crea primero tu perfil de cliente")
+    if not client or not all((
+        client.admin_phone, client.city, client.municipality, client.state,
+    )):
+        raise HTTPException(409, "Completa primero tu perfil de cliente")
     musician = db.get(MusicianProfile, data.musician_id)
     if not musician:
         raise HTTPException(404, "Agrupación no encontrada")
@@ -490,9 +873,12 @@ def get_my_bookings(
     bookings = db.scalars(
         booking_query()
         .where(Booking.musician_id == profile.id)
-        .order_by(Booking.event_date, Booking.start_time)
+        .order_by(Booking.created_at.desc(), Booking.id.desc())
     ).all()
-    return [booking_out(item) for item in bookings]
+    return [
+        booking_out(item, include_private_recommendation=True)
+        for item in bookings
+    ]
 
 
 @app.get(
@@ -570,6 +956,10 @@ def get_booking_review(
     db: Session = Depends(get_db),
 ):
     booking = accessible_booking(booking_id, user, db)
+    if user.role != UserRole.admin and (
+        user.role != UserRole.musician or booking.musician.user_id != user.id
+    ):
+        raise HTTPException(403, "La recomendación es privada para la agrupación")
     if not booking.review:
         raise HTTPException(404, "Este evento aún no tiene calificación")
     return booking.review
@@ -585,7 +975,8 @@ def get_booking_messages(
     db: Session = Depends(get_db),
 ):
     booking = accessible_booking(booking_id, user, db)
-    require_active_chat(booking)
+    if user.role != UserRole.admin:
+        require_active_chat(booking)
     messages = db.scalars(
         select(ChatMessage)
         .where(ChatMessage.booking_id == booking.id)
@@ -606,7 +997,8 @@ def send_booking_message(
     db: Session = Depends(get_db),
 ):
     booking = accessible_booking(booking_id, user, db)
-    require_active_chat(booking)
+    if user.role != UserRole.admin:
+        require_active_chat(booking)
     message = ChatMessage(
         booking_id=booking.id,
         sender_user_id=user.id,
@@ -627,12 +1019,14 @@ def upload_media(media_type: MediaType, position: int = Query(ge=1), file: Uploa
     if not profile: raise HTTPException(409, "Crea primero el perfil de la agrupación")
     maximum = {MediaType.profile_photo: 1, MediaType.photo: 5, MediaType.video: 2}[media_type]
     if position > maximum: raise HTTPException(422, f"Sólo se permiten {maximum} archivo(s) de este tipo")
-    allowed = {MediaType.video: ("video/",), MediaType.photo: ("image/",), MediaType.profile_photo: ("image/",)}[media_type]
-    if not file.content_type or not file.content_type.startswith(allowed): raise HTTPException(415, "Tipo de archivo no permitido")
-    extension = Path(file.filename or "").suffix.lower() or (".mp4" if media_type == MediaType.video else ".jpg")
+    allowed = ({"video/mp4", "video/webm"} if media_type == MediaType.video
+               else {"image/jpeg", "image/png", "image/webp"})
+    if file.content_type not in allowed: raise HTTPException(415, "Tipo de archivo no permitido")
+    extension = CONTENT_TYPE_EXTENSIONS[file.content_type]
     folder = settings.upload_dir / str(profile.id); folder.mkdir(parents=True, exist_ok=True)
     target = folder / f"{media_type.value}-{position}-{uuid4().hex}{extension}"
-    with target.open("wb") as output: shutil.copyfileobj(file.file, output)
+    maximum_bytes = settings.max_video_bytes if media_type == MediaType.video else settings.max_image_bytes
+    save_upload(file, target, maximum_bytes)
     existing = db.scalar(select(Media).where(Media.musician_id == profile.id, Media.media_type == media_type, Media.position == position))
     public_url = f"/uploads/{profile.id}/{target.name}"
     if existing:

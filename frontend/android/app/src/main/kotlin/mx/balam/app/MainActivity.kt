@@ -1,4 +1,4 @@
-package com.example.balam_app
+package mx.balam.app
 
 import io.flutter.embedding.android.FlutterActivity
 

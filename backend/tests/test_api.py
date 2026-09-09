@@ -1,10 +1,13 @@
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
 os.environ["DATABASE_URL"] = "sqlite:///./test_balam.db"
 os.environ["UPLOAD_DIR"] = "test_uploads"
+os.environ["APP_ENV"] = "test"
+os.environ["SECRET_KEY"] = "test-only-secret-key-with-at-least-32-characters"
+os.environ["EXPOSE_PASSWORD_RESET_CODE"] = "true"
 
 from fastapi.testclient import TestClient
 from app.database import Base, engine
@@ -27,13 +30,23 @@ def test_full_registration_and_search_flow():
     musician = client.post("/api/auth/register", json={"email":"musico@example.com","password":"segura123","role":"musician"})
     assert musician.status_code == 201
     mh = {"Authorization": f"Bearer {musician.json()['access_token']}"}
+    rules = client.get("/api/musicians/me/rules", headers=mh)
+    assert rules.status_code == 200
+    assert rules.json()["accepted"] is False
+    assert rules.json()["rules_version"] == "GARIBALDY_GROUP_RULES_V1"
+    accepted_rules = client.post("/api/musicians/me/rules/accept", headers=mh)
+    assert accepted_rules.status_code == 200
+    assert accepted_rules.json()["accepted"] is True
+    assert accepted_rules.json()["accepted_at"] is not None
     profile = client.put("/api/musicians/me", headers=mh, json={
-        "contact_name":"Ana López","group_name":"Los del Valle","group_type":"Norteño",
+        "contact_name":"Ana López","admin_phone":"8111111111","city":"Monterrey","municipality":"Monterrey","state":"Nuevo León","group_name":"Los del Valle","group_type":"Norteño",
         "musical_style":"Norteño tradicional","member_count":5,"hourly_rate":3500,
         "includes_sound":True,"subwoofer_count":2,"mid_speaker_count":4,
         "equipment_brands":["JBL","QSC"],"audience_capacity":500,"description":"Música para eventos"
     })
     assert profile.status_code == 200
+    accepted_reference = client.get("/api/musicians/me/rules", headers=mh).json()
+    assert accepted_reference["accepted_group_name"] == "Los del Valle"
     choice = client.put("/api/users/me/avatar-preset", headers=mh,
         json={"preset":"jaguar_accordion","color":"#20C9B5"})
     assert choice.status_code == 200
@@ -56,7 +69,7 @@ def test_full_registration_and_search_flow():
     assert "busy_dates" not in found.json()[0]
     customer = client.post("/api/auth/register", json={"email":"cliente@example.com","password":"segura123","role":"client"})
     ch = {"Authorization": f"Bearer {customer.json()['access_token']}"}
-    result = client.put("/api/clients/me", headers=ch, json={"name":"Luis","musical_tastes":["Norteño"],"favorite_groups":["Intocable"]})
+    result = client.put("/api/clients/me", headers=ch, json={"name":"Luis","admin_phone":"8122222222","city":"Guadalupe","municipality":"Guadalupe","state":"Nuevo León","musical_tastes":["Norteño"],"favorite_groups":["Intocable"]})
     assert result.status_code == 200 and result.json()["musical_tastes"] == ["Norteño"]
     restored_client = client.get("/api/clients/me", headers=ch)
     assert restored_client.status_code == 200
@@ -97,6 +110,7 @@ def test_full_registration_and_search_flow():
     assert musician_notifications.status_code == 200
     assert musician_notifications.json()[0]["event_date"] == "2099-10-19"
     assert musician_notifications.json()[0]["start_time"] == "18:30:00"
+    assert musician_notifications.json()[0]["is_new_sale"] is True
     client_bookings = client.get("/api/clients/me/bookings", headers=ch)
     assert client_bookings.status_code == 200
     booking_id = booking.json()["id"]
@@ -182,6 +196,23 @@ def test_full_registration_and_search_flow():
     reviewed_booking = client.get("/api/clients/me/bookings", headers=ch).json()[0]
     assert reviewed_booking["can_review"] is False
     assert reviewed_booking["review_score"] == 4.77
+    assert reviewed_booking["review_recommendation"] is None
+    private_review = client.get(f"/api/bookings/{booking_id}/review", headers=mh)
+    assert private_review.status_code == 200
+    assert private_review.json()["recommendation"] == "Sigan así, gran ambiente."
+    assert client.get(
+        f"/api/bookings/{booking_id}/review", headers=ch
+    ).status_code == 403
+    musician_contract = client.get("/api/musicians/me/bookings", headers=mh).json()[0]
+    assert musician_contract["review_recommendation"] == "Sigan así, gran ambiente."
+    with SessionLocal() as db:
+        stored_booking = db.get(Booking, booking_id)
+        stored_booking.created_at = (
+            datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=25)
+        )
+        db.commit()
+    archived_contract = client.get("/api/musicians/me/bookings", headers=mh).json()[0]
+    assert archived_contract["is_new_sale"] is False
     public_group = client.get("/api/musicians?q=Valle").json()[0]
     assert public_group["rating"] == 4.77 and public_group["review_count"] == 1
     with SessionLocal() as db:
@@ -220,7 +251,7 @@ def test_login_flow_and_invalid_credentials():
         "email": "login@example.com", "password": "incorrecta"
     })
     assert invalid.status_code == 401
-    assert invalid.json()["detail"] == "Correo o contraseña incorrectos"
+    assert invalid.json()["detail"] == "Correo, celular o contraseña incorrectos"
 
 
 def test_login_with_damaged_password_hash_returns_unauthorized():
@@ -241,3 +272,145 @@ def test_login_with_damaged_password_hash_returns_unauthorized():
         "email": "damaged@example.com", "password": "segura123"
     })
     assert response.status_code == 401
+
+
+def test_phone_registration_login_and_password_reset():
+    registered = client.post("/api/auth/register", json={
+        "phone": "81 1234 5678",
+        "password": "claveInicial123",
+        "role": "client",
+    })
+    assert registered.status_code == 201
+    duplicate = client.post("/api/auth/register", json={
+        "phone": "8112345678",
+        "password": "otraClave123",
+        "role": "musician",
+    })
+    assert duplicate.status_code == 409
+    logged_in = client.post("/api/auth/login", json={
+        "identifier": "8112345678",
+        "password": "claveInicial123",
+    })
+    assert logged_in.status_code == 200
+    headers = {"Authorization": f"Bearer {logged_in.json()['access_token']}"}
+    me = client.get("/api/users/me", headers=headers).json()
+    assert me["phone"] == "8112345678"
+    assert me["email"] is None
+    requested = client.post("/api/auth/password-reset/request", json={
+        "identifier": "8112345678",
+    })
+    assert requested.status_code == 200
+    code = requested.json()["dev_code"]
+    assert len(code) == 6
+    changed = client.post("/api/auth/password-reset/confirm", json={
+        "identifier": "8112345678",
+        "code": code,
+        "new_password": "claveNueva123",
+    })
+    assert changed.status_code == 200
+    assert client.post("/api/auth/login", json={
+        "identifier": "8112345678", "password": "claveNueva123",
+    }).status_code == 200
+    assert client.post("/api/auth/password-reset/confirm", json={
+        "identifier": "8112345678",
+        "code": code,
+        "new_password": "noDebeCambiar123",
+    }).status_code == 400
+
+
+def test_musician_cannot_create_profile_without_accepting_rules():
+    registered = client.post("/api/auth/register", json={
+        "email": "reglas@example.com",
+        "password": "segura123",
+        "role": "musician",
+    })
+    headers = {"Authorization": f"Bearer {registered.json()['access_token']}"}
+    response = client.put("/api/musicians/me", headers=headers, json={
+        "contact_name": "Grupo Reglas",
+        "admin_phone": "8133333333",
+        "city": "Ameca",
+        "municipality": "Ameca",
+        "state": "Jalisco",
+        "group_name": "Grupo sin aceptar",
+        "group_type": "Banda",
+        "musical_style": "Regional",
+        "member_count": 5,
+        "hourly_rate": 3000,
+        "equipment_brands": [],
+        "description": "Perfil bloqueado hasta aceptar las reglas.",
+    })
+    assert response.status_code == 403
+    assert "Reglas para Agrupaciones" in response.json()["detail"]
+
+
+def test_admin_panel_and_contract_messaging():
+    from app.auth import hash_password
+    from app.database import SessionLocal
+    from app.models import User, UserRole
+
+    with SessionLocal() as db:
+        admin = User(
+            email="admin@garibaldy.local",
+            password_hash=hash_password("AdminSegura123"),
+            role=UserRole.admin,
+        )
+        db.add(admin)
+        db.commit()
+    login = client.post("/api/auth/login", json={
+        "identifier": "admin@garibaldy.local",
+        "password": "AdminSegura123",
+    })
+    assert login.status_code == 200
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    admin_me = client.get("/api/users/me", headers=headers)
+    assert admin_me.status_code == 200
+    assert admin_me.json()["role"] == "admin"
+    assert client.get("/api/admin/clients", headers=headers).status_code == 200
+    assert client.get("/api/admin/groups", headers=headers).status_code == 200
+    contracts = client.get("/api/admin/bookings", headers=headers)
+    assert contracts.status_code == 200
+    booking_id = contracts.json()[0]["id"]
+    message = client.post(
+        f"/api/bookings/{booking_id}/messages",
+        headers=headers,
+        json={"text": "Mensaje de seguimiento administrativo."},
+    )
+    assert message.status_code == 201
+    assert message.json()["sender_role"] == "admin"
+    assert message.json()["sender_name"] == "Administración Garibaldy"
+    public_admin = client.post("/api/auth/register", json={
+        "email": "intruso@example.com",
+        "password": "segura123",
+        "role": "admin",
+    })
+    assert public_admin.status_code == 403
+
+
+def test_security_headers_and_health_check():
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["referrer-policy"] == "no-referrer"
+
+
+def test_password_reset_code_is_not_returned_when_delivery_is_configured():
+    from app.config import settings
+
+    registered = client.post("/api/auth/register", json={
+        "email": "reset-privado@example.com",
+        "password": "segura123",
+        "role": "client",
+    })
+    assert registered.status_code == 201
+    with (
+        patch.object(settings, "expose_password_reset_code", False),
+        patch("app.main.deliver_password_reset_code") as deliver,
+    ):
+        response = client.post("/api/auth/password-reset/request", json={
+            "identifier": "reset-privado@example.com",
+        })
+    assert response.status_code == 200
+    assert "dev_code" not in response.json()
+    deliver.assert_called_once()

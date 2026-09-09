@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import '../api_service.dart';
 import '../widgets/booking_chat_sheet.dart';
 import '../widgets/glass_ui.dart';
+import 'group_rules_screen.dart';
 import 'rhythm_game_screen.dart';
 
 class MusicianProfileScreen extends StatefulWidget {
@@ -23,6 +24,10 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
   final fields = <String, TextEditingController>{
     for (final key in [
       'contact_name',
+      'admin_phone',
+      'city',
+      'municipality',
+      'state',
       'group_name',
       'group_type',
       'musical_style',
@@ -41,13 +46,45 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
   bool busy = false;
   bool loading = true;
   bool editing = false;
+  bool rulesLoading = true;
+  bool rulesAccepted = false;
   final Set<String> busyDates = {};
   List<dynamic> bookings = [];
 
   @override
   void initState() {
     super.initState();
-    loadProfile();
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    try {
+      final status = await widget.api.get('/api/musicians/me/rules')
+          as Map<String, dynamic>;
+      rulesAccepted = status['accepted'] == true;
+      if (rulesAccepted) {
+        await loadProfile();
+      } else {
+        loading = false;
+      }
+    } on ApiException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } finally {
+      if (mounted) setState(() => rulesLoading = false);
+    }
+  }
+
+  Future<void> _acceptRules() async {
+    await widget.api.post('/api/musicians/me/rules/accept', {});
+    if (!mounted) return;
+    setState(() {
+      rulesAccepted = true;
+      loading = true;
+    });
+    await loadProfile();
   }
 
   Future<void> loadProfile() async {
@@ -56,7 +93,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
           await widget.api.get('/api/musicians/me') as Map<String, dynamic>;
       _fill(data);
       profile = data;
-      editing = false;
+      editing = data['profile_complete'] != true;
       await Future.wait([_loadBusyDates(), _loadBookings()]);
     } on ApiException catch (error) {
       if (error.statusCode == 404) {
@@ -250,6 +287,10 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
 
   String label(String key) => const {
         'contact_name': 'Nombre de contacto',
+        'admin_phone': 'Celular privado para soporte administrativo',
+        'city': 'Ciudad',
+        'municipality': 'Municipio',
+        'state': 'Estado',
         'group_name': 'Nombre de la agrupación',
         'group_type': 'Tipo de grupo',
         'musical_style': 'Corriente musical',
@@ -268,13 +309,14 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
     try {
       final saved = await widget.api.put('/api/musicians/me', {
         for (final entry in fields.entries)
-          entry.key: numeric(entry.key)
-              ? (entry.key == 'hourly_rate'
-                  ? double.parse(entry.value.text)
-                  : int.parse(entry.value.text))
-              : entry.key == 'equipment_brands'
-                  ? entry.value.text.split(',')
-                  : entry.value.text,
+          if (entry.key != 'admin_phone' || entry.value.text.trim().isNotEmpty)
+            entry.key: numeric(entry.key)
+                ? (entry.key == 'hourly_rate'
+                    ? double.parse(entry.value.text)
+                    : int.parse(entry.value.text))
+                : entry.key == 'equipment_brands'
+                    ? entry.value.text.split(',')
+                    : entry.value.text,
         'includes_sound': sound,
       }) as Map<String, dynamic>;
       profile = saved;
@@ -344,34 +386,57 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
         appBar: AppBar(
           backgroundColor: Colors.transparent,
           title: const Text('Mi espacio'),
-          actions: [
-            IconButton(
-                tooltip: 'Salto musical',
-                onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) => const RhythmGameScreen())),
-                icon: const Icon(Icons.sports_esports_rounded)),
-            if (profile != null && !editing)
-              IconButton(
-                  onPressed: () => setState(() => editing = true),
-                  icon: const Icon(Icons.edit_outlined)),
-            IconButton(
-                onPressed: widget.onLogout, icon: const Icon(Icons.logout)),
-          ],
+          actions: rulesAccepted
+              ? [
+                  IconButton(
+                      tooltip: 'Salto musical',
+                      onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                              builder: (_) => const RhythmGameScreen())),
+                      icon: const Icon(Icons.sports_esports_rounded)),
+                  if (profile != null && !editing)
+                    IconButton(
+                        onPressed: () => setState(() => editing = true),
+                        icon: const Icon(Icons.edit_outlined)),
+                  IconButton(
+                      onPressed: widget.onLogout,
+                      icon: const Icon(Icons.logout)),
+                ]
+              : [
+                  IconButton(
+                      onPressed: widget.onLogout,
+                      icon: const Icon(Icons.logout)),
+                ],
         ),
         body: GlassBackground(
           child: SafeArea(
-            child: loading
+            child: rulesLoading
                 ? const Center(child: CircularProgressIndicator())
-                : AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 280),
-                    child: editing ? _editor() : _socialProfile(),
-                  ),
+                : !rulesAccepted
+                    ? GroupRulesScreen(
+                        onAccept: _acceptRules,
+                        onDecline: widget.onLogout,
+                      )
+                    : loading
+                        ? const Center(child: CircularProgressIndicator())
+                        : AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 280),
+                            child: editing ? _editor() : _socialProfile(),
+                          ),
           ),
         ),
       );
 
   Widget _socialProfile() {
     final data = profile!;
+    final newSales = bookings
+        .cast<Map<String, dynamic>>()
+        .where((item) => item['is_new_sale'] == true)
+        .toList();
+    final contractHistory = bookings
+        .cast<Map<String, dynamic>>()
+        .where((item) => item['is_new_sale'] != true)
+        .toList();
     final media = data['media'] as List<dynamic>? ?? [];
     final avatar = media
         .cast<Map<String, dynamic>>()
@@ -436,6 +501,42 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
               Text('${data['group_type']} · ${data['musical_style']}',
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: Color(0xFFBFA7ED))),
+              const SizedBox(height: 6),
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.location_on_outlined,
+                    size: 17, color: Color(0xFF68DDCD)),
+                const SizedBox(width: 5),
+                Flexible(
+                  child: Text(
+                    '${data['city']}, ${data['municipality']}, ${data['state']}',
+                    textAlign: TextAlign.center,
+                    style:
+                        TextStyle(color: Colors.white.withValues(alpha: .70)),
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 10),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFC857).withValues(alpha: .12),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                      color: const Color(0xFFFFC857).withValues(alpha: .28)),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.star_rounded,
+                      color: Color(0xFFFFC857), size: 22),
+                  const SizedBox(width: 6),
+                  Text(
+                    data['rating'] == null
+                        ? 'Aún sin calificaciones'
+                        : '${data['rating']} · ${data['review_count']} ${data['review_count'] == 1 ? 'calificación' : 'calificaciones'}',
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ]),
+              ),
               const SizedBox(height: 14),
               const Chip(
                   avatar: Icon(Icons.verified, size: 18),
@@ -469,7 +570,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
               Chip(label: Text(brand)),
           ]),
         ])),
-        if (bookings.isNotEmpty) ...[
+        if (newSales.isNotEmpty) ...[
           const SizedBox(height: 16),
           GlassCard(
             child: Column(
@@ -491,63 +592,39 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
                   ),
                 ]),
                 const SizedBox(height: 14),
-                for (final item in bookings.cast<Map<String, dynamic>>()) ...[
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: .07),
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(
-                          color: Colors.white.withValues(alpha: .10)),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(_formatDate(item['event_date'].toString()),
-                            style: const TextStyle(
-                                color: Color(0xFF68DDCD),
-                                fontWeight: FontWeight.w800,
-                                fontSize: 17)),
-                        const SizedBox(height: 8),
-                        Row(children: [
-                          const Icon(Icons.location_on_outlined, size: 19),
-                          const SizedBox(width: 7),
-                          Expanded(child: Text(item['venue'].toString())),
-                        ]),
-                        const SizedBox(height: 7),
-                        Row(children: [
-                          const Icon(Icons.schedule, size: 19),
-                          const SizedBox(width: 7),
-                          Text(
-                              '${_formatTime(item['start_time'])} – ${_formatTime(item['end_time'])}'),
-                        ]),
-                        const SizedBox(height: 7),
-                        Row(children: [
-                          const Icon(Icons.person_outline, size: 19),
-                          const SizedBox(width: 7),
-                          Expanded(
-                            child: Text(
-                                '${item['client_name']} · ${item['client_email']}'),
-                          ),
-                        ]),
-                        const SizedBox(height: 10),
-                        FilledButton.tonalIcon(
-                          onPressed: () => showBookingChat(
-                            context,
-                            api: widget.api,
-                            booking: item,
-                          ),
-                          icon: Icon(item['chat_active'] == true
-                              ? Icons.forum_outlined
-                              : Icons.lock_clock_outlined),
-                          label: Text(item['chat_active'] == true
-                              ? 'Chat del evento'
-                              : 'Chat disponible en el evento'),
-                        ),
-                      ],
-                    ),
+                for (final item in newSales) ...[
+                  _contractCard(item),
+                  const SizedBox(height: 9),
+                ],
+              ],
+            ),
+          ),
+        ],
+        if (contractHistory.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          GlassCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(children: [
+                  CircleAvatar(
+                    backgroundColor: Color(0x33BFA1FF),
+                    child: Icon(Icons.receipt_long_outlined,
+                        color: Color(0xFFBFA1FF)),
                   ),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text('Mis contratos',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w800)),
+                  ),
+                ]),
+                const SizedBox(height: 6),
+                Text('Del más reciente al más antiguo.',
+                    style: TextStyle(color: Colors.white60)),
+                const SizedBox(height: 14),
+                for (final item in contractHistory) ...[
+                  _contractCard(item),
                   const SizedBox(height: 9),
                 ],
               ],
@@ -643,6 +720,89 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
     );
   }
 
+  Widget _contractCard(Map<String, dynamic> item) {
+    final recommendation = item['review_recommendation']?.toString().trim();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: .07),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withValues(alpha: .10)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(_formatDate(item['event_date'].toString()),
+              style: const TextStyle(
+                  color: Color(0xFF68DDCD),
+                  fontWeight: FontWeight.w800,
+                  fontSize: 17)),
+          const SizedBox(height: 8),
+          Row(children: [
+            const Icon(Icons.location_on_outlined, size: 19),
+            const SizedBox(width: 7),
+            Expanded(child: Text(item['venue'].toString())),
+          ]),
+          const SizedBox(height: 7),
+          Row(children: [
+            const Icon(Icons.schedule, size: 19),
+            const SizedBox(width: 7),
+            Text(
+                '${_formatTime(item['start_time'])} – ${_formatTime(item['end_time'])}'),
+          ]),
+          const SizedBox(height: 7),
+          Row(children: [
+            const Icon(Icons.person_outline, size: 19),
+            const SizedBox(width: 7),
+            Expanded(
+                child:
+                    Text('${item['client_name']} · ${item['client_email']}')),
+          ]),
+          if (recommendation != null && recommendation.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFC857).withValues(alpha: .10),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(children: [
+                    Icon(Icons.lightbulb_outline,
+                        size: 18, color: Color(0xFFFFC857)),
+                    SizedBox(width: 6),
+                    Text('Recomendación privada del cliente',
+                        style: TextStyle(fontWeight: FontWeight.w800)),
+                  ]),
+                  const SizedBox(height: 6),
+                  Text(recommendation),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
+          FilledButton.tonalIcon(
+            onPressed: () => showBookingChat(
+              context,
+              api: widget.api,
+              booking: item,
+            ),
+            icon: Icon(item['chat_active'] == true
+                ? Icons.forum_outlined
+                : Icons.lock_clock_outlined),
+            label: Text(item['chat_active'] == true
+                ? 'Chat del evento'
+                : 'Chat disponible en el evento'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _stat(String value, String label) => Column(children: [
         Text(value,
             style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
@@ -695,6 +855,11 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
                   Text('Esta información será visible para todos los clientes.',
                       style: TextStyle(
                           color: Colors.white.withValues(alpha: .65))),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'El celular es privado: sólo se guardará para soporte administrativo.',
+                    style: TextStyle(color: Color(0xFFFFC857), fontSize: 12),
+                  ),
                   const SizedBox(height: 20),
                   for (final entry in fields.entries) ...[
                     TextFormField(
@@ -704,10 +869,12 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
                           : TextInputType.text,
                       maxLines: entry.key == 'description' ? 4 : 1,
                       decoration: InputDecoration(labelText: label(entry.key)),
-                      validator: (value) =>
-                          value == null || value.trim().isEmpty
-                              ? 'Campo obligatorio'
-                              : null,
+                      validator: (value) => value == null ||
+                              value.trim().isEmpty &&
+                                  (entry.key != 'admin_phone' ||
+                                      profile?['admin_phone_saved'] != true)
+                          ? 'Campo obligatorio'
+                          : null,
                     ),
                     const SizedBox(height: 13),
                   ],

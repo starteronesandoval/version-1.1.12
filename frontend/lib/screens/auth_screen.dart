@@ -20,6 +20,84 @@ class _AuthScreenState extends State<AuthScreen> {
   bool registerMode = true;
   bool busy = false;
 
+  Future<void> forgotPassword() async {
+    final identifier = email.text.trim();
+    if (identifier.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Escribe primero tu correo o número celular')));
+      return;
+    }
+    try {
+      final devCode = await widget.api.requestPasswordReset(identifier);
+      if (!mounted) return;
+      final code = TextEditingController(text: devCode ?? '');
+      final newPassword = TextEditingController();
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Recuperar contraseña'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(devCode == null
+                  ? 'Escribe el código de 6 dígitos que recibiste.'
+                  : 'Código de desarrollo: $devCode'),
+              const SizedBox(height: 14),
+              TextField(
+                controller: code,
+                keyboardType: TextInputType.number,
+                maxLength: 6,
+                decoration: const InputDecoration(
+                    labelText: 'Código', prefixIcon: Icon(Icons.pin_outlined)),
+              ),
+              TextField(
+                controller: newPassword,
+                obscureText: true,
+                decoration: const InputDecoration(
+                    labelText: 'Nueva contraseña',
+                    prefixIcon: Icon(Icons.lock_reset)),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancelar')),
+            FilledButton(
+              onPressed: () async {
+                try {
+                  await widget.api.confirmPasswordReset(
+                      identifier, code.text.trim(), newPassword.text);
+                  if (dialogContext.mounted) {
+                    Navigator.pop(dialogContext, true);
+                  }
+                } on ApiException catch (error) {
+                  if (dialogContext.mounted) {
+                    ScaffoldMessenger.of(dialogContext)
+                        .showSnackBar(SnackBar(content: Text(error.message)));
+                  }
+                }
+              },
+              child: const Text('Cambiar contraseña'),
+            ),
+          ],
+        ),
+      );
+      code.dispose();
+      newPassword.dispose();
+      if (confirmed == true && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content:
+                Text('Contraseña actualizada. Ya puedes iniciar sesión.')));
+      }
+    } on ApiException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    }
+  }
+
   Future<void> submit() async {
     if (email.text.trim().isEmpty || password.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -166,8 +244,8 @@ class _AuthScreenState extends State<AuthScreen> {
                             controller: email,
                             keyboardType: TextInputType.emailAddress,
                             decoration: const InputDecoration(
-                                labelText: 'Correo electrónico',
-                                prefixIcon: Icon(Icons.alternate_email))),
+                                labelText: 'Correo o número celular',
+                                prefixIcon: Icon(Icons.contact_mail_outlined))),
                         const SizedBox(height: 14),
                         TextField(
                             controller: password,
@@ -175,6 +253,14 @@ class _AuthScreenState extends State<AuthScreen> {
                             decoration: const InputDecoration(
                                 labelText: 'Contraseña',
                                 prefixIcon: Icon(Icons.lock_outline))),
+                        if (!registerMode)
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton(
+                              onPressed: busy ? null : forgotPassword,
+                              child: const Text('Olvidé mi contraseña'),
+                            ),
+                          ),
                         if (registerMode) ...[
                           const SizedBox(height: 20),
                           const Text('Elige tu experiencia',

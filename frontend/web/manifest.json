@@ -1,11 +1,11 @@
 {
-    "name": "balam_app",
-    "short_name": "balam_app",
+    "name": "Balam",
+    "short_name": "Balam",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#111111",
+    "theme_color": "#D4AF37",
+    "description": "Marketplace para conectar clientes con agrupaciones musicales.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

@@ -47,7 +47,7 @@ class _BookingChatSheetState extends State<BookingChatSheet> {
     super.initState();
     _loadMessages();
     refreshTimer = Timer.periodic(
-      const Duration(seconds: 3),
+      const Duration(minutes: 1),
       (_) => _loadMessages(silent: true),
     );
   }
@@ -56,9 +56,10 @@ class _BookingChatSheetState extends State<BookingChatSheet> {
     if (refreshing) return;
     refreshing = true;
     try {
-      final response =
-          await widget.api.get('/api/bookings/${widget.booking['id']}/messages')
-              as List<dynamic>;
+      final response = await widget.api.get(
+        '/api/bookings/${widget.booking['id']}/messages',
+        timeout: const Duration(seconds: 5),
+      ) as List<dynamic>;
       if (!mounted) return;
       final updated = response.cast<Map<String, dynamic>>();
       final changed = updated.length != messages.length;

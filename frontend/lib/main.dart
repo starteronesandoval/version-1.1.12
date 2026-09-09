@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'api_service.dart';
 import 'screens/auth_screen.dart';
+import 'screens/admin_dashboard_screen.dart';
 import 'screens/client_home.dart';
 import 'screens/musician_profile_screen.dart';
 
@@ -153,8 +154,10 @@ class _BalamAppState extends State<BalamApp> {
                 ? _startupFailure()
                 : role == null
                     ? AuthScreen(api: api, onSignedIn: _signedIn)
-                    : role == 'musician'
-                        ? MusicianProfileScreen(api: api, onLogout: _logout)
-                        : ClientHome(api: api, onLogout: _logout),
+                    : role == 'admin'
+                        ? AdminDashboardScreen(api: api, onLogout: _logout)
+                        : role == 'musician'
+                            ? MusicianProfileScreen(api: api, onLogout: _logout)
+                            : ClientHome(api: api, onLogout: _logout),
       );
 }

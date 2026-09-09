@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: balam
+      POSTGRES_USER: balam
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD en el entorno}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U balam -d balam"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  api:
+    build: ./backend
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+psycopg://balam:${POSTGRES_PASSWORD}@postgres:5432/balam
+      SECRET_KEY: ${SECRET_KEY:?Define SECRET_KEY en el entorno}
+      CORS_ORIGINS: ${CORS_ORIGINS:?Define CORS_ORIGINS en el entorno}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:?Define ALLOWED_HOSTS en el entorno}
+      PASSWORD_RESET_WEBHOOK_URL: ${PASSWORD_RESET_WEBHOOK_URL:?Define PASSWORD_RESET_WEBHOOK_URL}
+      PASSWORD_RESET_WEBHOOK_TOKEN: ${PASSWORD_RESET_WEBHOOK_TOKEN:-}
+      UPLOAD_DIR: /data/uploads
+    ports:
+      - "8000:8000"
+    volumes:
+      - uploads_data:/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  uploads_data:

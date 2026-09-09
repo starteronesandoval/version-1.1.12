@@ -1,7 +1,7 @@
 import enum
 from datetime import date, datetime, time, timezone
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, Float, ForeignKey, Integer, String, Text, Time, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Enum, Float, ForeignKey, Integer, Numeric, String, Text, Time, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -10,6 +10,7 @@ from .database import Base
 class UserRole(str, enum.Enum):
     musician = "musician"
     client = "client"
+    admin = "admin"
 
 
 class MediaType(str, enum.Enum):
@@ -22,6 +23,7 @@ class User(Base):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    phone: Mapped[str | None] = mapped_column(String(20), unique=True, index=True, nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[UserRole] = mapped_column(Enum(UserRole))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -30,6 +32,37 @@ class User(Base):
     client_profile: Mapped["ClientProfile | None"] = relationship(back_populates="user", cascade="all, delete-orphan")
     avatar_choice: Mapped["AvatarChoice | None"] = relationship(
         back_populates="user", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class PasswordResetCode(Base):
+    __tablename__ = "password_reset_codes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    code_hash: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    used: Mapped[bool] = mapped_column(Boolean, default=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
+
+
+class RulesAcceptance(Base):
+    __tablename__ = "rules_acceptances"
+    __table_args__ = (
+        UniqueConstraint("user_id", "rules_type", "rules_version"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    rules_type: Mapped[str] = mapped_column(String(80), index=True)
+    rules_version: Mapped[str] = mapped_column(String(80), index=True)
+    group_name_snapshot: Mapped[str | None] = mapped_column(
+        String(180), nullable=True
+    )
+    accepted: Mapped[bool] = mapped_column(Boolean, default=True)
+    accepted_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )
 
 
@@ -47,11 +80,15 @@ class MusicianProfile(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
     contact_name: Mapped[str] = mapped_column(String(120))
+    admin_phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    municipality: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    state: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     group_name: Mapped[str] = mapped_column(String(180), index=True)
     group_type: Mapped[str] = mapped_column(String(100), index=True)
     musical_style: Mapped[str] = mapped_column(String(180), index=True)
     member_count: Mapped[int] = mapped_column(Integer)
-    hourly_rate: Mapped[float] = mapped_column(Float)
+    hourly_rate: Mapped[float] = mapped_column(Numeric(12, 2))
     includes_sound: Mapped[bool] = mapped_column(Boolean, default=False)
     subwoofer_count: Mapped[int] = mapped_column(Integer, default=0)
     mid_speaker_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -87,6 +124,10 @@ class ClientProfile(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(120))
+    admin_phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    municipality: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    state: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     musical_tastes: Mapped[str] = mapped_column(Text, default="")
     favorite_groups: Mapped[str] = mapped_column(Text, default="")
     user: Mapped[User] = relationship(back_populates="client_profile")
