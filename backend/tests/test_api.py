@@ -254,6 +254,65 @@ def test_login_flow_and_invalid_credentials():
     assert invalid.json()["detail"] == "Correo, celular o contraseña incorrectos"
 
 
+def test_google_registration_login_and_email_collision():
+    google_claims = {
+        "sub": "google-user-123",
+        "email": "google@example.com",
+        "email_verified": True,
+    }
+    with patch("app.main.verify_google_token", return_value=google_claims):
+        registered = client.post("/api/auth/google", json={
+            "id_token": "x" * 100,
+            "create_account": True,
+            "role": "client",
+        })
+        assert registered.status_code == 200
+        headers = {
+            "Authorization": f"Bearer {registered.json()['access_token']}"
+        }
+        me = client.get("/api/users/me", headers=headers)
+        assert me.status_code == 200
+        assert me.json()["email"] == "google@example.com"
+        assert me.json()["role"] == "client"
+
+        changed_role = client.post("/api/auth/google", json={
+            "id_token": "y" * 100,
+            "create_account": True,
+            "role": "musician",
+        })
+        assert changed_role.status_code == 200
+        changed_headers = {
+            "Authorization": f"Bearer {changed_role.json()['access_token']}"
+        }
+        changed_me = client.get("/api/users/me", headers=changed_headers)
+        assert changed_me.json()["role"] == "musician"
+
+        logged_in = client.post("/api/auth/google", json={
+            "id_token": "y" * 100,
+            "create_account": False,
+        })
+        assert logged_in.status_code == 200
+
+    local = client.post("/api/auth/register", json={
+        "email": "local@example.com",
+        "password": "segura123",
+        "role": "client",
+    })
+    assert local.status_code == 201
+    collision_claims = {
+        "sub": "different-google-user",
+        "email": "local@example.com",
+        "email_verified": True,
+    }
+    with patch("app.main.verify_google_token", return_value=collision_claims):
+        collision = client.post("/api/auth/google", json={
+            "id_token": "z" * 100,
+            "create_account": True,
+            "role": "client",
+        })
+    assert collision.status_code == 409
+
+
 def test_login_with_damaged_password_hash_returns_unauthorized():
     from sqlalchemy import select
     from app.database import SessionLocal
@@ -274,45 +333,39 @@ def test_login_with_damaged_password_hash_returns_unauthorized():
     assert response.status_code == 401
 
 
-def test_phone_registration_login_and_password_reset():
+def test_phone_registration_is_not_available():
     registered = client.post("/api/auth/register", json={
         "phone": "81 1234 5678",
         "password": "claveInicial123",
         "role": "client",
     })
-    assert registered.status_code == 201
-    duplicate = client.post("/api/auth/register", json={
-        "phone": "8112345678",
-        "password": "otraClave123",
-        "role": "musician",
-    })
-    assert duplicate.status_code == 409
-    logged_in = client.post("/api/auth/login", json={
-        "identifier": "8112345678",
+    assert registered.status_code == 422
+
+
+def test_email_password_reset():
+    registered = client.post("/api/auth/register", json={
+        "email": "recuperacion@example.com",
         "password": "claveInicial123",
+        "role": "client",
     })
-    assert logged_in.status_code == 200
-    headers = {"Authorization": f"Bearer {logged_in.json()['access_token']}"}
-    me = client.get("/api/users/me", headers=headers).json()
-    assert me["phone"] == "8112345678"
-    assert me["email"] is None
+    assert registered.status_code == 201
     requested = client.post("/api/auth/password-reset/request", json={
-        "identifier": "8112345678",
+        "email": "recuperacion@example.com",
     })
     assert requested.status_code == 200
     code = requested.json()["dev_code"]
     assert len(code) == 6
     changed = client.post("/api/auth/password-reset/confirm", json={
-        "identifier": "8112345678",
+        "email": "recuperacion@example.com",
         "code": code,
         "new_password": "claveNueva123",
     })
     assert changed.status_code == 200
     assert client.post("/api/auth/login", json={
-        "identifier": "8112345678", "password": "claveNueva123",
+        "identifier": "recuperacion@example.com", "password": "claveNueva123",
     }).status_code == 200
     assert client.post("/api/auth/password-reset/confirm", json={
-        "identifier": "8112345678",
+        "email": "recuperacion@example.com",
         "code": code,
         "new_password": "noDebeCambiar123",
     }).status_code == 400
@@ -409,7 +462,7 @@ def test_password_reset_code_is_not_returned_when_delivery_is_configured():
         patch("app.main.deliver_password_reset_code") as deliver,
     ):
         response = client.post("/api/auth/password-reset/request", json={
-            "identifier": "reset-privado@example.com",
+            "email": "reset-privado@example.com",
         })
     assert response.status_code == 200
     assert "dev_code" not in response.json()

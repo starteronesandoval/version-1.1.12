@@ -3,6 +3,9 @@ from datetime import datetime, timedelta, timezone
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
+from google.auth.exceptions import GoogleAuthError
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token as google_id_token
 from jwt import InvalidTokenError
 from pwdlib import PasswordHash
 from sqlalchemy.orm import Session
@@ -27,6 +30,31 @@ def verify_password(password: str, hashed: str) -> bool:
         return password_hash.verify(password, hashed)
     except Exception:
         return False
+
+
+def verify_google_token(token: str) -> dict:
+    if not settings.google_client_ids:
+        raise HTTPException(
+            status_code=503,
+            detail="El acceso con Google todavía no está configurado",
+        )
+    for audience in settings.google_client_ids:
+        try:
+            claims = google_id_token.verify_oauth2_token(
+                token, google_requests.Request(), audience=audience
+            )
+        except (ValueError, GoogleAuthError):
+            continue
+        if claims.get("email_verified") is not True:
+            raise HTTPException(
+                status_code=401, detail="Google no verificó este correo"
+            )
+        if not claims.get("sub") or not claims.get("email"):
+            raise HTTPException(
+                status_code=401, detail="La cuenta de Google está incompleta"
+            )
+        return claims
+    raise HTTPException(status_code=401, detail="Token de Google inválido")
 
 
 def create_token(user: User) -> str:

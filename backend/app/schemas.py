@@ -6,16 +6,9 @@ from .models import MediaType, UserRole
 
 
 class RegisterRequest(BaseModel):
-    email: EmailStr | None = None
-    phone: str | None = Field(default=None, min_length=10, max_length=20)
+    email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     role: UserRole
-
-    @model_validator(mode="after")
-    def validate_identifier(self):
-        if bool(self.email) == bool(self.phone):
-            raise ValueError("Escribe sólo un correo o un número celular")
-        return self
 
 
 class LoginRequest(BaseModel):
@@ -31,8 +24,22 @@ class LoginRequest(BaseModel):
         return self
 
 
+class GoogleAuthRequest(BaseModel):
+    id_token: str = Field(min_length=100, max_length=10000)
+    role: UserRole | None = None
+    create_account: bool = False
+
+    @model_validator(mode="after")
+    def require_role_for_registration(self):
+        if self.create_account and self.role not in {
+            UserRole.client, UserRole.musician,
+        }:
+            raise ValueError("Elige si usarás Balam como cliente o agrupación")
+        return self
+
+
 class PasswordResetRequest(BaseModel):
-    identifier: str = Field(min_length=3, max_length=320)
+    email: EmailStr
 
 
 class PasswordResetRequestResponse(BaseModel):
@@ -41,7 +48,7 @@ class PasswordResetRequestResponse(BaseModel):
 
 
 class PasswordResetConfirm(BaseModel):
-    identifier: str = Field(min_length=3, max_length=320)
+    email: EmailStr
     code: str = Field(pattern=r"^\d{6}$")
     new_password: str = Field(min_length=8, max_length=128)
 
@@ -173,6 +180,13 @@ class BookingResponse(BaseModel):
     venue: str
     start_time: time
     end_time: time
+    hourly_rate_cents: int
+    duration_minutes: int
+    subtotal_cents: int
+    service_fee_cents: int
+    total_cents: int
+    currency: str
+    payment_status: str
     created_at: datetime
     chat_active: bool
     chat_status: str

@@ -4,12 +4,15 @@ import hmac
 import logging
 import re
 import secrets
+import smtplib
+import ssl
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal, ROUND_HALF_UP
+from email.message import EmailMessage
 from pathlib import Path
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -18,7 +21,9 @@ from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from .auth import create_token, current_user, hash_password, require_role, verify_password
+from .auth import (create_token, current_user, hash_password, require_role,
+                   verify_google_token, verify_password)
+from .billing import router as billing_router
 from .config import settings
 from .database import get_db
 from .models import (AvatarChoice, Booking, BookingReview, ChatMessage, ClientAvatar,
@@ -31,7 +36,7 @@ from .schemas import (AvailabilityResponse, AvatarChoiceUpdate, BookingCreate,
                       ChatMessageCreate, ChatMessageResponse,
                       ClientProfileResponse, ClientProfileUpsert, LoginRequest,
                       MusicianProfileResponse, MusicianProfileUpsert,
-                      PasswordResetConfirm, PasswordResetRequest,
+                      GoogleAuthRequest, PasswordResetConfirm, PasswordResetRequest,
                       PasswordResetRequestResponse, RegisterRequest,
                       RulesAcceptanceResponse, TokenResponse, UserResponse)
 
@@ -43,6 +48,7 @@ app = FastAPI(
     docs_url=None if settings.app_env == "production" else "/docs",
     redoc_url=None if settings.app_env == "production" else "/redoc",
 )
+app.include_router(billing_router)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 app.add_middleware(
     CORSMiddleware,
@@ -82,6 +88,35 @@ def values(raw: str) -> list[str]:
         return []
 
 
+def booking_price_snapshot(hourly_rate: float, start_time, end_time) -> dict:
+    start_minutes = start_time.hour * 60 + start_time.minute
+    end_minutes = end_time.hour * 60 + end_time.minute
+    duration_minutes = end_minutes - start_minutes
+    hourly_rate_cents = int(
+        (Decimal(str(hourly_rate)) * 100).quantize(
+            Decimal("1"), rounding=ROUND_HALF_UP
+        )
+    )
+    subtotal_cents = int(
+        (Decimal(hourly_rate_cents) * Decimal(duration_minutes) / Decimal(60))
+        .quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    )
+    service_fee_cents = int(
+        (Decimal(subtotal_cents) * Decimal("0.066")).quantize(
+            Decimal("1"), rounding=ROUND_HALF_UP
+        )
+    )
+    return {
+        "hourly_rate_cents": hourly_rate_cents,
+        "duration_minutes": duration_minutes,
+        "subtotal_cents": subtotal_cents,
+        "service_fee_cents": service_fee_cents,
+        "total_cents": subtotal_cents + service_fee_cents,
+        "currency": "mxn",
+        "payment_status": "pending",
+    }
+
+
 def normalize_phone(value: str) -> str:
     phone = re.sub(r"\D", "", value)
     if len(phone) < 10 or len(phone) > 15:
@@ -109,20 +144,26 @@ def reset_code_hash(user_id: int, code: str) -> str:
 def deliver_password_reset_code(user: User, code: str) -> None:
     if settings.expose_password_reset_code:
         return
-    if not settings.password_reset_webhook_url:
+    if not user.email or not settings.smtp_host or not settings.smtp_from_email:
         raise HTTPException(503, "La recuperación de contraseña no está disponible")
-    headers = {"Content-Type": "application/json"}
-    if settings.password_reset_webhook_token:
-        headers["Authorization"] = f"Bearer {settings.password_reset_webhook_token}"
+    message = EmailMessage()
+    message["Subject"] = "Código para recuperar tu cuenta Balam"
+    message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
+    message["To"] = user.email
+    message.set_content(
+        "Recibimos una solicitud para cambiar tu contraseña de Balam.\n\n"
+        f"Tu código es: {code}\n\n"
+        "El código vence en 15 minutos. Si no solicitaste este cambio, "
+        "ignora este mensaje."
+    )
     try:
-        response = httpx.post(
-            settings.password_reset_webhook_url,
-            headers=headers,
-            json={"email": None if user.phone else user.email, "phone": user.phone, "code": code},
-            timeout=5.0,
-        )
-        response.raise_for_status()
-    except httpx.HTTPError as exc:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:
+            if settings.smtp_starttls:
+                smtp.starttls(context=ssl.create_default_context())
+            if settings.smtp_username:
+                smtp.login(settings.smtp_username, settings.smtp_password or "")
+            smtp.send_message(message)
+    except (OSError, smtplib.SMTPException) as exc:
         raise HTTPException(503, "No pudimos enviar el código de recuperación") from exc
 
 
@@ -235,6 +276,13 @@ def booking_out(
         venue=booking.venue,
         start_time=booking.start_time,
         end_time=booking.end_time,
+        hourly_rate_cents=booking.hourly_rate_cents,
+        duration_minutes=booking.duration_minutes,
+        subtotal_cents=booking.subtotal_cents,
+        service_fee_cents=booking.service_fee_cents,
+        total_cents=booking.total_cents,
+        currency=booking.currency,
+        payment_status=booking.payment_status,
         created_at=booking.created_at,
         chat_active=chat_active,
         chat_status=chat_status,
@@ -340,15 +388,11 @@ def health(db: Session = Depends(get_db)):
 def register(data: RegisterRequest, db: Session = Depends(get_db)):
     if data.role == UserRole.admin:
         raise HTTPException(403, "El rol administrador no admite registro público")
-    phone = normalize_phone(data.phone) if data.phone else None
-    email = str(data.email).strip().lower() if data.email else None
-    if email and db.scalar(select(User).where(User.email == email)):
+    email = str(data.email).strip().lower()
+    if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(409, "El correo ya está registrado")
-    if phone and db.scalar(select(User).where(User.phone == phone)):
-        raise HTTPException(409, "El número celular ya está registrado")
-    stored_email = email or f"phone-{phone}@balam.local"
     user = User(
-        email=stored_email, phone=phone,
+        email=email,
         password_hash=hash_password(data.password), role=data.role,
     )
     db.add(user); db.commit(); db.refresh(user)
@@ -363,6 +407,55 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
     return TokenResponse(access_token=create_token(user))
 
 
+@app.post("/api/auth/google", response_model=TokenResponse)
+def google_auth(data: GoogleAuthRequest, db: Session = Depends(get_db)):
+    claims = verify_google_token(data.id_token)
+    subject = str(claims["sub"])
+    email = str(claims["email"]).strip().lower()
+
+    user = db.scalar(select(User).where(User.google_subject == subject))
+    if user:
+        if not user.is_active:
+            raise HTTPException(403, "Esta cuenta está desactivada")
+        if data.create_account and data.role and data.role != user.role:
+            if user.client_profile or user.musician_profile:
+                raise HTTPException(
+                    409,
+                    "Esta cuenta ya tiene un perfil Balam y no puede cambiar de modalidad",
+                )
+            user.role = data.role
+            db.commit()
+            db.refresh(user)
+        return TokenResponse(access_token=create_token(user))
+
+    email_user = db.scalar(select(User).where(User.email == email))
+    if email_user:
+        raise HTTPException(
+            409,
+            "Este correo ya tiene una cuenta Balam. Entra con tu contraseña para vincular Google.",
+        )
+    if not data.create_account:
+        raise HTTPException(
+            404,
+            "Aún no existe una cuenta Balam con este Google. Elige Crear una cuenta.",
+        )
+
+    user = User(
+        email=email,
+        password_hash=hash_password(secrets.token_urlsafe(32)),
+        google_subject=subject,
+        role=data.role,
+    )
+    db.add(user)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "La cuenta de Google ya está registrada")
+    db.refresh(user)
+    return TokenResponse(access_token=create_token(user))
+
+
 @app.post(
     "/api/auth/password-reset/request",
     response_model=PasswordResetRequestResponse,
@@ -370,7 +463,8 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
 def request_password_reset(
     data: PasswordResetRequest, db: Session = Depends(get_db)
 ):
-    user = find_user(data.identifier, db)
+    email = str(data.email).strip().lower()
+    user = db.scalar(select(User).where(User.email == email))
     message = "Si la cuenta existe, generamos un código válido durante 15 minutos."
     if not user:
         return PasswordResetRequestResponse(message=message)
@@ -408,7 +502,8 @@ def request_password_reset(
 def confirm_password_reset(
     data: PasswordResetConfirm, db: Session = Depends(get_db)
 ):
-    user = find_user(data.identifier, db)
+    email = str(data.email).strip().lower()
+    user = db.scalar(select(User).where(User.email == email))
     if not user:
         raise HTTPException(400, "Código inválido o vencido")
     reset = db.scalar(select(PasswordResetCode).where(
@@ -838,6 +933,9 @@ def create_booking(
         venue=data.venue.strip(),
         start_time=data.start_time,
         end_time=data.end_time,
+        **booking_price_snapshot(
+            musician.hourly_rate, data.start_time, data.end_time
+        ),
     )
     db.add(booking)
     db.add(

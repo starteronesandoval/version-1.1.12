@@ -5,6 +5,7 @@ import 'screens/auth_screen.dart';
 import 'screens/admin_dashboard_screen.dart';
 import 'screens/client_home.dart';
 import 'screens/musician_profile_screen.dart';
+import 'widgets/garibaldi_splash.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -24,6 +25,8 @@ class _BalamAppState extends State<BalamApp> {
   late final ApiService api;
   String? role;
   bool loading = true;
+  bool _restoreFinished = false;
+  bool _introFinished = false;
   String? startupError;
 
   @override
@@ -31,12 +34,19 @@ class _BalamAppState extends State<BalamApp> {
     super.initState();
     api = widget.api ?? ApiService();
     _restore();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await Future<void>.delayed(const Duration(milliseconds: 1800));
+      if (!mounted) return;
+      _introFinished = true;
+      if (_restoreFinished) setState(() => loading = false);
+    });
   }
 
   Future<void> _restore() async {
     if (mounted) {
       setState(() {
         loading = true;
+        _restoreFinished = false;
         startupError = null;
       });
     }
@@ -65,14 +75,15 @@ class _BalamAppState extends State<BalamApp> {
             'No pudimos conectar con Balam. Revisa tu conexión e inténtalo de nuevo.';
       }
     } finally {
-      if (mounted) setState(() => loading = false);
+      _restoreFinished = true;
+      if (mounted && _introFinished) setState(() => loading = false);
     }
   }
 
   void _signedIn(String value) => setState(() {
-        role = value;
-        startupError = null;
-      });
+    role = value;
+    startupError = null;
+  });
   Future<void> _logout() async {
     await api.logout();
     if (mounted) {
@@ -84,80 +95,86 @@ class _BalamAppState extends State<BalamApp> {
   }
 
   Widget _startupFailure() => Scaffold(
-        body: SafeArea(
-          child: Center(
-            child: Padding(
-              padding: const EdgeInsets.all(28),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 420),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.cloud_off_rounded,
-                        size: 64, color: Color(0xFFFFC857)),
-                    const SizedBox(height: 18),
-                    const Text('Balam no pudo iniciar',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                            fontSize: 24, fontWeight: FontWeight.w800)),
-                    const SizedBox(height: 10),
-                    Text(startupError!,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                            color: Colors.white.withValues(alpha: .72))),
-                    const SizedBox(height: 22),
-                    FilledButton.icon(
-                      onPressed: _restore,
-                      icon: const Icon(Icons.refresh_rounded),
-                      label: const Text('Reintentar'),
-                    ),
-                    TextButton(
-                      onPressed: _logout,
-                      child: const Text('Cerrar sesión y volver al acceso'),
-                    ),
-                  ],
+    body: SafeArea(
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.cloud_off_rounded,
+                  size: 64,
+                  color: Color(0xFFFFC857),
                 ),
-              ),
+                const SizedBox(height: 18),
+                const Text(
+                  'Balam no pudo iniciar',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  startupError!,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white.withValues(alpha: .72)),
+                ),
+                const SizedBox(height: 22),
+                FilledButton.icon(
+                  onPressed: _restore,
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('Reintentar'),
+                ),
+                TextButton(
+                  onPressed: _logout,
+                  child: const Text('Cerrar sesión y volver al acceso'),
+                ),
+              ],
             ),
           ),
         ),
-      );
+      ),
+    ),
+  );
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-        debugShowCheckedModeBanner: false,
-        title: 'Balam',
-        theme: ThemeData(
-          brightness: Brightness.dark,
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: const Color(0xFF8B5CF6),
-            brightness: Brightness.dark,
-          ),
-          useMaterial3: true,
-          scaffoldBackgroundColor: const Color(0xFF130B2B),
-          inputDecorationTheme: InputDecorationTheme(
-            filled: true,
-            fillColor: Colors.white.withValues(alpha: .08),
-            border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(18),
-                borderSide: BorderSide.none),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(18),
-              borderSide:
-                  BorderSide(color: Colors.white.withValues(alpha: .14)),
-            ),
-          ),
+    debugShowCheckedModeBanner: false,
+    title: 'Garibaldi',
+    theme: ThemeData(
+      brightness: Brightness.dark,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: garibaldiGold,
+        brightness: Brightness.dark,
+      ),
+      useMaterial3: true,
+      scaffoldBackgroundColor: garibaldiInk,
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: Colors.white.withValues(alpha: .08),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: BorderSide.none,
         ),
-        home: loading
-            ? const Scaffold(body: Center(child: CircularProgressIndicator()))
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: BorderSide(color: Colors.white.withValues(alpha: .14)),
+        ),
+      ),
+    ),
+    home:
+        loading
+            ? const GaribaldiSplash()
             : startupError != null
-                ? _startupFailure()
-                : role == null
-                    ? AuthScreen(api: api, onSignedIn: _signedIn)
-                    : role == 'admin'
-                        ? AdminDashboardScreen(api: api, onLogout: _logout)
-                        : role == 'musician'
-                            ? MusicianProfileScreen(api: api, onLogout: _logout)
-                            : ClientHome(api: api, onLogout: _logout),
-      );
+            ? _startupFailure()
+            : role == null
+            ? AuthScreen(api: api, onSignedIn: _signedIn)
+            : role == 'admin'
+            ? AdminDashboardScreen(api: api, onLogout: _logout)
+            : role == 'musician'
+            ? MusicianProfileScreen(api: api, onLogout: _logout)
+            : ClientHome(api: api, onLogout: _logout),
+  );
 }

@@ -15,7 +15,7 @@ class ApiException implements Exception {
 
 class ApiService {
   ApiService({String? baseUrl})
-      : baseUrl = _normalizeBaseUrl(baseUrl ?? _defaultBaseUrl());
+    : baseUrl = _normalizeBaseUrl(baseUrl ?? _defaultBaseUrl());
   final String baseUrl;
   final _storage = const FlutterSecureStorage();
   static const requestTimeout = Duration(seconds: 12);
@@ -67,9 +67,10 @@ class ApiService {
   dynamic _decode(http.Response response) {
     dynamic body;
     try {
-      body = response.body.isEmpty
-          ? null
-          : jsonDecode(utf8.decode(response.bodyBytes));
+      body =
+          response.body.isEmpty
+              ? null
+              : jsonDecode(utf8.decode(response.bodyBytes));
     } on FormatException {
       throw ApiException(
         'El servidor devolvió una respuesta no válida',
@@ -92,17 +93,16 @@ class ApiService {
   }
 
   Future<void> register(
-    String identifier,
+    String email,
     String password,
     String selectedRole,
   ) async {
-    final isEmail = identifier.contains('@');
     final response = await http
         .post(
           Uri.parse('$baseUrl/api/auth/register'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({
-            if (isEmail) 'email': identifier else 'phone': identifier,
+            'email': email,
             'password': password,
             'role': selectedRole,
           }),
@@ -133,51 +133,80 @@ class ApiService {
     }
   }
 
+  Future<String> googleAuth(
+    String idToken, {
+    required bool createAccount,
+    String? selectedRole,
+  }) async {
+    final response = await http
+        .post(
+          Uri.parse('$baseUrl/api/auth/google'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'id_token': idToken,
+            'create_account': createAccount,
+            if (selectedRole != null) 'role': selectedRole,
+          }),
+        )
+        .timeout(requestTimeout);
+    final body = _decode(response) as Map<String, dynamic>;
+    await _storage.write(key: 'token', value: body['access_token'] as String);
+    try {
+      final me = await get('/api/users/me') as Map<String, dynamic>;
+      final signedInRole = me['role'] as String;
+      await _storage.write(key: 'role', value: signedInRole);
+      return signedInRole;
+    } catch (_) {
+      await _storage.delete(key: 'token');
+      await _storage.delete(key: 'role');
+      rethrow;
+    }
+  }
+
   Future<void> logout() => _storage.deleteAll();
 
-  Future<String?> requestPasswordReset(String identifier) async {
-    final body = await post(
-      '/api/auth/password-reset/request',
-      {'identifier': identifier},
-    ) as Map<String, dynamic>;
+  Future<String?> requestPasswordReset(String email) async {
+    final body =
+        await post('/api/auth/password-reset/request', {'email': email})
+            as Map<String, dynamic>;
     return body['dev_code'] as String?;
   }
 
   Future<void> confirmPasswordReset(
-    String identifier,
+    String email,
     String code,
     String newPassword,
   ) async {
     await post('/api/auth/password-reset/confirm', {
-      'identifier': identifier,
+      'email': email,
       'code': code,
       'new_password': newPassword,
     });
   }
 
   Future<dynamic> get(String path, {Duration? timeout}) async => _decode(
-        await http
-            .get(Uri.parse('$baseUrl$path'), headers: await _headers())
-            .timeout(timeout ?? requestTimeout),
-      );
+    await http
+        .get(Uri.parse('$baseUrl$path'), headers: await _headers())
+        .timeout(timeout ?? requestTimeout),
+  );
   Future<dynamic> post(String path, Map<String, dynamic> data) async => _decode(
-        await http
-            .post(
-              Uri.parse('$baseUrl$path'),
-              headers: await _headers(),
-              body: jsonEncode(data),
-            )
-            .timeout(requestTimeout),
-      );
+    await http
+        .post(
+          Uri.parse('$baseUrl$path'),
+          headers: await _headers(),
+          body: jsonEncode(data),
+        )
+        .timeout(requestTimeout),
+  );
   Future<dynamic> put(String path, Map<String, dynamic> data) async => _decode(
-        await http
-            .put(
-              Uri.parse('$baseUrl$path'),
-              headers: await _headers(),
-              body: jsonEncode(data),
-            )
-            .timeout(requestTimeout),
-      );
+    await http
+        .put(
+          Uri.parse('$baseUrl$path'),
+          headers: await _headers(),
+          body: jsonEncode(data),
+        )
+        .timeout(requestTimeout),
+  );
 
   Future<void> uploadMedia(File file, String type, int position) async {
     final request = http.MultipartRequest(
@@ -190,7 +219,8 @@ class ApiService {
     request.headers['Authorization'] = 'Bearer $value';
     request.files.add(await http.MultipartFile.fromPath('file', file.path));
     final response = await http.Response.fromStream(
-        await request.send().timeout(requestTimeout));
+      await request.send().timeout(requestTimeout),
+    );
     _decode(response);
   }
 
@@ -202,12 +232,17 @@ class ApiService {
     final value = await token;
     request.headers['Authorization'] = 'Bearer $value';
     request.files.add(await http.MultipartFile.fromPath('file', file.path));
-    _decode(await http.Response.fromStream(
-        await request.send().timeout(requestTimeout)));
+    _decode(
+      await http.Response.fromStream(
+        await request.send().timeout(requestTimeout),
+      ),
+    );
   }
 
   Future<void> setAvatarPreset(String preset, String color) async {
-    await put(
-        '/api/users/me/avatar-preset', {'preset': preset, 'color': color});
+    await put('/api/users/me/avatar-preset', {
+      'preset': preset,
+      'color': color,
+    });
   }
 }

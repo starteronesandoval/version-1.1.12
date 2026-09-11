@@ -13,6 +13,13 @@ class Settings(BaseSettings):
     access_token_minutes: int = 60 * 24 * 7
     upload_dir: Path = Path("uploads")
     event_timezone: str = "America/Mexico_City"
+    stripe_secret_key: str | None = None
+    stripe_webhook_secret: str | None = None
+    billing_success_url: str = (
+        "http://10.0.2.2:8000/api/billing/checkout/success"
+        "?session_id={CHECKOUT_SESSION_ID}"
+    )
+    billing_cancel_url: str = "http://10.0.2.2:8000/api/billing/checkout/cancel"
     cors_origins: Annotated[list[str], NoDecode] = [
         "http://localhost:3000", "http://localhost:8080"
     ]
@@ -22,8 +29,16 @@ class Settings(BaseSettings):
     database_pool_size: int = 10
     database_max_overflow: int = 20
     database_pool_timeout: int = 30
-    password_reset_webhook_url: str | None = None
-    password_reset_webhook_token: str | None = None
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from_email: str | None = None
+    smtp_from_name: str = "Balam"
+    smtp_starttls: bool = True
+    google_client_ids: Annotated[list[str], NoDecode] = [
+        "882316037020-3tgmqu1p4vn8g187aam0svvo8cmr1l0g.apps.googleusercontent.com"
+    ]
     expose_password_reset_code: bool = False
     max_image_bytes: int = 8 * 1024 * 1024
     max_video_bytes: int = 100 * 1024 * 1024
@@ -32,7 +47,7 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
-    @field_validator("cors_origins", "allowed_hosts", mode="before")
+    @field_validator("cors_origins", "allowed_hosts", "google_client_ids", mode="before")
     @classmethod
     def parse_csv(cls, value):
         if isinstance(value, str) and not value.lstrip().startswith("["):
@@ -54,10 +69,19 @@ class Settings(BaseSettings):
                 raise ValueError("ALLOWED_HOSTS debe enumerar los hosts públicos")
             if self.expose_password_reset_code:
                 raise ValueError("EXPOSE_PASSWORD_RESET_CODE no puede activarse en producción")
-            if not self.password_reset_webhook_url:
-                raise ValueError("PASSWORD_RESET_WEBHOOK_URL es obligatorio en producción")
-            if not self.password_reset_webhook_url.startswith("https://"):
-                raise ValueError("PASSWORD_RESET_WEBHOOK_URL debe usar HTTPS")
+            if not self.smtp_host or not self.smtp_from_email:
+                raise ValueError(
+                    "SMTP_HOST y SMTP_FROM_EMAIL son obligatorios en producción"
+                )
+            if not self.stripe_secret_key or not self.stripe_webhook_secret:
+                raise ValueError(
+                    "STRIPE_SECRET_KEY y STRIPE_WEBHOOK_SECRET son obligatorios "
+                    "en producción"
+                )
+            if not self.billing_success_url.startswith("https://"):
+                raise ValueError("BILLING_SUCCESS_URL debe usar HTTPS")
+            if not self.billing_cancel_url.startswith("https://"):
+                raise ValueError("BILLING_CANCEL_URL debe usar HTTPS")
         return self
 
 
