@@ -11,10 +11,13 @@ class _BrokenStorageApi extends ApiService {
 }
 
 void main() {
-  testWidgets('el arranque continúa si falla el almacenamiento seguro',
-      (tester) async {
+  testWidgets('el arranque continúa si falla el almacenamiento seguro', (
+    tester,
+  ) async {
     await tester.pumpWidget(BalamApp(api: _BrokenStorageApi()));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1900));
+    await tester.pump();
 
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.byType(AuthScreen), findsOneWidget);
@@ -30,11 +33,10 @@ void main() {
     expect(find.text('Agrupación'), findsOneWidget);
   });
 
-  testWidgets('la primera etapa usa una nota negra y siete controles',
-      (tester) async {
-    await tester.pumpWidget(
-      const MaterialApp(home: RhythmGameScreen()),
-    );
+  testWidgets('la primera etapa usa una nota negra y siete controles', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const MaterialApp(home: RhythmGameScreen()));
 
     expect(find.text('Pentagrama Balam'), findsOneWidget);
     expect(find.textContaining('nota negra'), findsOneWidget);
@@ -50,8 +52,10 @@ void main() {
     await tester.tap(find.byTooltip('Cómo jugar'));
     await tester.pumpAndSettle();
 
-    expect(find.text('MI · FA · SOL · LA · SI · DO · RE · MI · FA'),
-        findsOneWidget);
+    expect(
+      find.text('MI · FA · SOL · LA · SI · DO · RE · MI · FA'),
+      findsOneWidget,
+    );
     expect(find.text('4 tiempos'), findsNothing);
     expect(find.text('Redonda'), findsNothing);
   });
