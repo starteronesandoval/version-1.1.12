@@ -174,7 +174,8 @@ def test_full_registration_and_search_flow():
     from app.models import Booking
     with SessionLocal() as db:
         stored_booking = db.get(Booking, booking_id)
-        stored_booking.event_date = date.today() - timedelta(days=1)
+        # Keep the event unambiguously in the past across UTC/local-date boundaries.
+        stored_booking.event_date = date.today() - timedelta(days=2)
         stored_booking.payment_status = "paid"
         stored_booking.payout_status = "musician_funds_held"
         db.commit()
