@@ -1234,7 +1234,12 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
           const SizedBox(height: 10),
           FilledButton.tonalIcon(
             onPressed:
-                () => showBookingChat(context, api: widget.api, booking: item),
+                () => showBookingChat(
+                  context,
+                  api: widget.api,
+                  booking: item,
+                  canInvite: true,
+                ),
             icon: Icon(
               item['chat_active'] == true
                   ? Icons.forum_outlined

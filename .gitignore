@@ -24,3 +24,9 @@ frontend/ios/Pods/
 /src/
 /out/
 /balam-*.png
+
+# Artefactos locales de pruebas y diagnóstico
+/*.apk
+/*.db
+/*.xml
+/*.png

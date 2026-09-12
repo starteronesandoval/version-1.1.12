@@ -276,3 +276,20 @@ class ChatMessageResponse(BaseModel):
     text: str
     created_at: datetime
     mine: bool
+
+
+class EventChatInviteResponse(BaseModel):
+    token: str
+    qr_value: str
+    expires_at: datetime
+
+
+class EventChatAccessResponse(BaseModel):
+    id: int
+    group_name: str
+    event_date: date
+    venue: str
+    start_time: time
+    end_time: time
+    chat_active: bool
+    chat_status: str

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../api_service.dart';
 
@@ -8,21 +9,36 @@ Future<void> showBookingChat(
   BuildContext context, {
   required ApiService api,
   required Map<String, dynamic> booking,
+  bool canInvite = false,
+  String? inviteToken,
 }) async {
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     backgroundColor: const Color(0xFF1C1235),
     showDragHandle: true,
-    builder: (_) => BookingChatSheet(api: api, booking: booking),
+    builder: (_) => BookingChatSheet(
+      api: api,
+      booking: booking,
+      canInvite: canInvite,
+      inviteToken: inviteToken,
+    ),
   );
 }
 
 class BookingChatSheet extends StatefulWidget {
-  const BookingChatSheet({super.key, required this.api, required this.booking});
+  const BookingChatSheet({
+    super.key,
+    required this.api,
+    required this.booking,
+    this.canInvite = false,
+    this.inviteToken,
+  });
 
   final ApiService api;
   final Map<String, dynamic> booking;
+  final bool canInvite;
+  final String? inviteToken;
 
   @override
   State<BookingChatSheet> createState() => _BookingChatSheetState();
@@ -36,7 +52,12 @@ class _BookingChatSheetState extends State<BookingChatSheet> {
   bool loading = true;
   bool refreshing = false;
   bool sending = false;
+  bool creatingInvite = false;
   String? lockedMessage;
+
+  String get _messagePath => widget.inviteToken == null
+      ? '/api/bookings/${widget.booking['id']}/messages'
+      : '/api/event-chat/${widget.inviteToken}/messages';
 
   @override
   void initState() {
@@ -54,7 +75,7 @@ class _BookingChatSheetState extends State<BookingChatSheet> {
     try {
       final response =
           await widget.api.get(
-                '/api/bookings/${widget.booking['id']}/messages',
+                _messagePath,
                 timeout: const Duration(seconds: 5),
               )
               as List<dynamic>;
@@ -98,7 +119,7 @@ class _BookingChatSheetState extends State<BookingChatSheet> {
     try {
       final saved =
           await widget.api.post(
-                '/api/bookings/${widget.booking['id']}/messages',
+                _messagePath,
                 {'text': text},
               )
               as Map<String, dynamic>;
@@ -114,6 +135,66 @@ class _BookingChatSheetState extends State<BookingChatSheet> {
       }
     } finally {
       if (mounted) setState(() => sending = false);
+    }
+  }
+
+  Future<void> _showInviteQr() async {
+    if (creatingInvite) return;
+    setState(() => creatingInvite = true);
+    try {
+      final invite = await widget.api.post(
+        '/api/bookings/${widget.booking['id']}/chat-invite',
+        const <String, dynamic>{},
+      ) as Map<String, dynamic>;
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Invitar a la fiesta'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                color: Colors.white,
+                padding: const EdgeInsets.all(14),
+                child: QrImageView(
+                  data: invite['qr_value'].toString(),
+                  size: 230,
+                  backgroundColor: Colors.white,
+                  dataModuleStyle: const QrDataModuleStyle(
+                    dataModuleShape: QrDataModuleShape.square,
+                    color: Colors.black,
+                  ),
+                  eyeStyle: const QrEyeStyle(
+                    eyeShape: QrEyeShape.square,
+                    color: Colors.black,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'Los invitados deben abrir Garibaldi y escanear este QR. '
+                'El acceso termina automáticamente al finalizar el evento.',
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cerrar'),
+            ),
+          ],
+        ),
+      );
+    } on ApiException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.message)),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => creatingInvite = false);
     }
   }
 
@@ -194,6 +275,21 @@ class _BookingChatSheetState extends State<BookingChatSheet> {
                           ],
                         ),
                       ),
+                      if (widget.canInvite)
+                        IconButton(
+                          tooltip: 'Invitar con QR',
+                          onPressed: creatingInvite ? null : _showInviteQr,
+                          icon:
+                              creatingInvite
+                                  ? const SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.5,
+                                    ),
+                                  )
+                                  : const Icon(Icons.qr_code_rounded),
+                        ),
                     ],
                   ),
                   const SizedBox(height: 10),

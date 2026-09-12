@@ -386,7 +386,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     SizedBox(
-                      height: 104,
+                      height: 190,
                       child: Center(
                         child: Stack(
                           alignment: Alignment.center,
@@ -399,8 +399,8 @@ class _AuthScreenState extends State<AuthScreen> {
                               child: Opacity(
                                 opacity: .22,
                                 child: Image.asset(
-                                  'assets/branding/balam_corp.png',
-                                  width: 224,
+                                  'assets/branding/garibaldi_jaguar_login.png',
+                                  width: 310,
                                   fit: BoxFit.contain,
                                 ),
                               ),
@@ -439,8 +439,8 @@ class _AuthScreenState extends State<AuthScreen> {
                                   child: Opacity(
                                     opacity: .86,
                                     child: Image.asset(
-                                      'assets/branding/balam_corp.png',
-                                      width: 214,
+                                      'assets/branding/garibaldi_jaguar_login.png',
+                                      width: 300,
                                       fit: BoxFit.contain,
                                     ),
                                   ),
@@ -451,16 +451,7 @@ class _AuthScreenState extends State<AuthScreen> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 14),
-                    const Text(
-                      'BALAM',
-                      style: TextStyle(
-                        letterSpacing: 5,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFFBFA1FF),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 10),
                     Text(
                       registerMode
                           ? '¡Conecta, contrata y disfruta!'

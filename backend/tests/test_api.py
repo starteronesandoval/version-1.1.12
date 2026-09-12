@@ -152,6 +152,36 @@ def test_full_registration_and_search_flow():
         f"/api/bookings/{booking_id}/messages", headers=stranger_headers
     )
     assert forbidden.status_code == 403
+    with patch(
+        "app.main.booking_chat_state",
+        return_value=(True, "Chat activo durante el horario del evento."),
+    ):
+        invite = client.post(
+            f"/api/bookings/{booking_id}/chat-invite", headers=ch
+        )
+        assert invite.status_code == 200
+        assert invite.json()["qr_value"].startswith("GARIBALDI_EVENT:")
+        musician_invite = client.post(
+            f"/api/bookings/{booking_id}/chat-invite", headers=mh
+        )
+        assert musician_invite.status_code == 200
+        assert musician_invite.json()["qr_value"].startswith("GARIBALDI_EVENT:")
+        invite_token = invite.json()["token"]
+        guest_access = client.get(
+            f"/api/event-chat/{invite_token}", headers=stranger_headers
+        )
+        assert guest_access.status_code == 200
+        guest_request = client.post(
+            f"/api/event-chat/{invite_token}/messages",
+            headers=stranger_headers,
+            json={"text": "¿Pueden tocar una cumbia?"},
+        )
+        assert guest_request.status_code == 201
+        assert guest_request.json()["sender_name"] == "otro"
+    closed_guest_chat = client.get(
+        f"/api/event-chat/{invite_token}/messages", headers=stranger_headers
+    )
+    assert closed_guest_chat.status_code == 403
     early_review = client.post(
         f"/api/bookings/{booking_id}/review", headers=ch,
         json={

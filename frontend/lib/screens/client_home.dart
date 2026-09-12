@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../api_service.dart';
 import '../widgets/booking_chat_sheet.dart';
+import '../widgets/event_chat_scanner.dart';
 import '../widgets/booking_review_sheet.dart';
 import '../widgets/glass_ui.dart';
 import 'rhythm_game_screen.dart';
@@ -141,6 +142,11 @@ class _ClientHomeState extends State<ClientHome> {
       actions:
           clientProfile?['profile_complete'] == true
               ? [
+                IconButton(
+                  tooltip: 'Entrar a una fiesta con QR',
+                  onPressed: () => scanEventChatQr(context, widget.api),
+                  icon: const Icon(Icons.qr_code_scanner_rounded),
+                ),
                 IconButton(
                   tooltip: 'Salto musical',
                   onPressed:
@@ -1105,6 +1111,7 @@ class _ClientHomeState extends State<ClientHome> {
                                               context,
                                               api: widget.api,
                                               booking: confirmed,
+                                              canInvite: true,
                                             );
                                           }
                                         });
@@ -1349,6 +1356,7 @@ class _ClientHomeState extends State<ClientHome> {
                                               this.context,
                                               api: widget.api,
                                               booking: item,
+                                              canInvite: true,
                                             );
                                           }
                                         });

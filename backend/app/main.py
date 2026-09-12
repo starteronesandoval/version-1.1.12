@@ -7,6 +7,7 @@ import secrets
 import smtplib
 import ssl
 import base64
+import jwt
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from email.message import EmailMessage
@@ -19,6 +20,7 @@ from cryptography.fernet import Fernet
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
@@ -38,6 +40,7 @@ from .schemas import (AdminPayoutAction, AvailabilityResponse, AvatarChoiceUpdat
                       BookingResponse, BusyDateResponse, BusyDateUpdate,
                       BookingReviewCreate, BookingReviewResponse,
                       ChatMessageCreate, ChatMessageResponse,
+                      EventChatAccessResponse, EventChatInviteResponse,
                       ClientProfileResponse, ClientProfileUpsert, LoginRequest,
                       MusicianProfileResponse, MusicianProfileUpsert,
                       PayoutDestinationResponse, PayoutDestinationUpsert,
@@ -456,27 +459,71 @@ def chat_message_out(
 ) -> ChatMessageResponse:
     sent_by_client = message.sender_user_id == booking.client.user_id
     sent_by_musician = message.sender_user_id == booking.musician.user_id
+    sender_role = (
+        UserRole.client if sent_by_client else
+        UserRole.musician if sent_by_musician else message.sender.role
+    )
+    sender_name = (
+        booking.client.name if sent_by_client else
+        booking.musician.group_name if sent_by_musician else
+        "Administración Garibaldy" if message.sender.role == UserRole.admin else
+        message.sender.client_profile.name
+        if message.sender.client_profile else
+        message.sender.musician_profile.group_name
+        if message.sender.musician_profile else
+        message.sender.email.split("@", 1)[0]
+    )
     return ChatMessageResponse(
         id=message.id,
         booking_id=message.booking_id,
         sender_user_id=message.sender_user_id,
-        sender_role=(UserRole.client if sent_by_client else
-                     UserRole.musician if sent_by_musician else UserRole.admin),
-        sender_name=(
-            booking.client.name if sent_by_client else
-            booking.musician.group_name if sent_by_musician else
-            "Administración Garibaldy"
-        ),
+        sender_role=sender_role,
+        sender_name=sender_name,
         text=message.text,
         created_at=message.created_at,
         mine=message.sender_user_id == viewer.id,
     )
 
 
+def event_chat_ends_at(booking: Booking) -> datetime:
+    return datetime.combine(
+        booking.event_date,
+        booking.end_time,
+        tzinfo=ZoneInfo(settings.event_timezone),
+    )
+
+
+def booking_from_event_chat_token(token: str, db: Session) -> Booking:
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
+        if payload.get("scope") != "event_chat":
+            raise ValueError
+        booking_id = int(payload["booking_id"])
+    except (jwt.InvalidTokenError, KeyError, TypeError, ValueError):
+        raise HTTPException(401, "La invitación del evento no es válida o ya expiró")
+    booking = db.scalar(booking_query().where(Booking.id == booking_id))
+    if not booking:
+        raise HTTPException(404, "El evento ya no está disponible")
+    require_active_chat(booking)
+    return booking
+
+
 @app.get("/health")
 def health(db: Session = Depends(get_db)):
     db.execute(text("SELECT 1"))
     return {"status": "ok"}
+
+
+@app.get("/downloads/garibaldi.apk", include_in_schema=False)
+def download_local_android_build():
+    apk = settings.upload_dir / "Garibaldi-red-local.apk"
+    if not apk.is_file():
+        raise HTTPException(404, "La APK local todavía no está disponible")
+    return FileResponse(
+        apk,
+        media_type="application/vnd.android.package-archive",
+        filename="Garibaldi-red-local.apk",
+    )
 
 
 @app.post("/api/auth/register", response_model=TokenResponse, status_code=201)
@@ -1377,6 +1424,102 @@ def send_booking_message(
     booking = accessible_booking(booking_id, user, db)
     if user.role != UserRole.admin:
         require_active_chat(booking)
+    message = ChatMessage(
+        booking_id=booking.id,
+        sender_user_id=user.id,
+        text=data.text.strip(),
+    )
+    if not message.text:
+        raise HTTPException(422, "Escribe un mensaje")
+    db.add(message)
+    db.commit()
+    db.refresh(message)
+    return chat_message_out(message, booking, user)
+
+
+@app.post(
+    "/api/bookings/{booking_id}/chat-invite",
+    response_model=EventChatInviteResponse,
+)
+def create_event_chat_invite(
+    booking_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    booking = accessible_booking(booking_id, user, db)
+    can_invite = user.id in {
+        booking.client.user_id,
+        booking.musician.user_id,
+    }
+    if not can_invite:
+        raise HTTPException(
+            403,
+            "Solo el anfitrión o la agrupación contratada pueden mostrar el QR",
+        )
+    require_active_chat(booking)
+    expires_at = event_chat_ends_at(booking)
+    token = jwt.encode(
+        {"scope": "event_chat", "booking_id": booking.id, "exp": expires_at},
+        settings.secret_key,
+        algorithm="HS256",
+    )
+    return EventChatInviteResponse(
+        token=token,
+        qr_value=f"GARIBALDI_EVENT:{token}",
+        expires_at=expires_at,
+    )
+
+
+@app.get("/api/event-chat/{token}", response_model=EventChatAccessResponse)
+def get_event_chat_access(
+    token: str,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    booking = booking_from_event_chat_token(token, db)
+    active, status = booking_chat_state(booking)
+    return EventChatAccessResponse(
+        id=booking.id,
+        group_name=booking.musician.group_name,
+        event_date=booking.event_date,
+        venue=booking.venue,
+        start_time=booking.start_time,
+        end_time=booking.end_time,
+        chat_active=active,
+        chat_status=status,
+    )
+
+
+@app.get(
+    "/api/event-chat/{token}/messages",
+    response_model=list[ChatMessageResponse],
+)
+def get_event_chat_messages(
+    token: str,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    booking = booking_from_event_chat_token(token, db)
+    messages = db.scalars(
+        select(ChatMessage)
+        .where(ChatMessage.booking_id == booking.id)
+        .order_by(ChatMessage.created_at, ChatMessage.id)
+    ).all()
+    return [chat_message_out(item, booking, user) for item in messages]
+
+
+@app.post(
+    "/api/event-chat/{token}/messages",
+    response_model=ChatMessageResponse,
+    status_code=201,
+)
+def send_event_chat_message(
+    token: str,
+    data: ChatMessageCreate,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    booking = booking_from_event_chat_token(token, db)
     message = ChatMessage(
         booking_id=booking.id,
         sender_user_id=user.id,
