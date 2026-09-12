@@ -137,6 +137,31 @@ class MusicianProfile(Base):
     reviews: Mapped[list["BookingReview"]] = relationship(
         back_populates="musician", cascade="all, delete-orphan"
     )
+    payout_destination: Mapped["MusicianPayoutDestination | None"] = relationship(
+        back_populates="musician", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class MusicianPayoutDestination(Base):
+    __tablename__ = "musician_payout_destinations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    musician_id: Mapped[int] = mapped_column(
+        ForeignKey("musician_profiles.id"), unique=True, index=True
+    )
+    destination_type: Mapped[str] = mapped_column(String(20))
+    encrypted_number: Mapped[str] = mapped_column(Text)
+    last4: Mapped[str] = mapped_column(String(4))
+    stripe_connected_account_id: Mapped[str | None] = mapped_column(
+        String(255), unique=True, index=True, nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+    musician: Mapped[MusicianProfile] = relationship(
+        back_populates="payout_destination"
+    )
 
 
 class MusicianBusyDate(Base):
@@ -189,6 +214,9 @@ class Booking(Base):
     subtotal_cents: Mapped[int] = mapped_column(Integer, default=0)
     service_fee_cents: Mapped[int] = mapped_column(Integer, default=0)
     total_cents: Mapped[int] = mapped_column(Integer, default=0)
+    musician_earnings_cents: Mapped[int] = mapped_column(Integer, default=0)
+    platform_fee_cents: Mapped[int] = mapped_column(Integer, default=0)
+    stripe_fee_estimate_cents: Mapped[int] = mapped_column(Integer, default=0)
     currency: Mapped[str] = mapped_column(String(3), default="mxn")
     payment_status: Mapped[str] = mapped_column(
         String(30), default="pending", index=True
@@ -199,6 +227,17 @@ class Booking(Base):
     stripe_payment_intent_id: Mapped[str | None] = mapped_column(
         String(255), nullable=True, unique=True
     )
+    stripe_transfer_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, unique=True
+    )
+    payout_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payout_status: Mapped[str] = mapped_column(
+        String(40), default="awaiting_payment", index=True
+    )
+    dispute_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dispute_opened_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    approved_for_payout_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    paid_out_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )

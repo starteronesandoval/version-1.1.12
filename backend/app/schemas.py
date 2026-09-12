@@ -140,6 +140,24 @@ class MusicianProfileResponse(MusicianProfileUpsert):
     admin_phone_saved: bool = False
 
 
+class PayoutDestinationUpsert(BaseModel):
+    destination_type: str = Field(pattern=r"^(clabe|debit_card)$")
+    account_number: str = Field(min_length=16, max_length=23)
+
+
+class PayoutDestinationResponse(BaseModel):
+    eligible: bool
+    configured: bool
+    destination_type: str | None = None
+    last4: str | None = None
+    updated_at: datetime | None = None
+    stripe_connect_ready: bool = False
+
+
+class StripeConnectAccountUpdate(BaseModel):
+    account_id: str = Field(pattern=r"^acct_[A-Za-z0-9]+$", max_length=255)
+
+
 class BusyDateUpdate(BaseModel):
     busy: bool
 
@@ -185,8 +203,15 @@ class BookingResponse(BaseModel):
     subtotal_cents: int
     service_fee_cents: int
     total_cents: int
+    musician_earnings_cents: int
+    platform_fee_cents: int
+    stripe_fee_estimate_cents: int
     currency: str
     payment_status: str
+    payout_status: str
+    dispute_reason: str | None = None
+    stripe_transfer_id: str | None = None
+    payout_error: str | None = None
     created_at: datetime
     chat_active: bool
     chat_status: str
@@ -196,6 +221,14 @@ class BookingResponse(BaseModel):
     review_recommendation: str | None = None
     event_finished: bool
     is_new_sale: bool = False
+
+
+class BookingDisputeCreate(BaseModel):
+    reason: str = Field(min_length=10, max_length=1500)
+
+
+class AdminPayoutAction(BaseModel):
+    action: str = Field(pattern=r"^(approve|mark_paid|reject_dispute)$")
 
 
 class BookingReviewCreate(BaseModel):

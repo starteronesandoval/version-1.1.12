@@ -10,6 +10,16 @@ La URL predeterminada `http://10.0.2.2:8000` funciona en el emulador Android. Pa
 flutter run --dart-define=API_BASE_URL=http://192.168.1.10:8000
 ```
 
+## Compilación conectada
+
+La aplicación siempre se conecta al backend. Para publicarla, la API debe estar
+alojada en un servicio web HTTPS:
+
+```powershell
+flutter build apk --release `
+  --dart-define=API_BASE_URL=https://api.tudominio.com
+```
+
 ## Validación y release
 
 ```powershell

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../api_service.dart';
@@ -10,8 +11,11 @@ import 'group_rules_screen.dart';
 import 'rhythm_game_screen.dart';
 
 class MusicianProfileScreen extends StatefulWidget {
-  const MusicianProfileScreen(
-      {super.key, required this.api, required this.onLogout});
+  const MusicianProfileScreen({
+    super.key,
+    required this.api,
+    required this.onLogout,
+  });
   final ApiService api;
   final VoidCallback onLogout;
   @override
@@ -50,6 +54,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
   bool rulesAccepted = false;
   final Set<String> busyDates = {};
   List<dynamic> bookings = [];
+  Map<String, dynamic>? payoutDestination;
 
   @override
   void initState() {
@@ -59,8 +64,9 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
 
   Future<void> _initialize() async {
     try {
-      final status = await widget.api.get('/api/musicians/me/rules')
-          as Map<String, dynamic>;
+      final status =
+          await widget.api.get('/api/musicians/me/rules')
+              as Map<String, dynamic>;
       rulesAccepted = status['accepted'] == true;
       if (rulesAccepted) {
         await loadProfile();
@@ -69,8 +75,9 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
       }
     } on ApiException catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(error.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
       }
     } finally {
       if (mounted) setState(() => rulesLoading = false);
@@ -95,12 +102,14 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
       profile = data;
       editing = data['profile_complete'] != true;
       await Future.wait([_loadBusyDates(), _loadBookings()]);
+      await _loadPayoutDestination();
     } on ApiException catch (error) {
       if (error.statusCode == 404) {
         editing = true;
       } else if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(error.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
       }
     } catch (_) {
       if (mounted) {
@@ -130,7 +139,166 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
         await widget.api.get('/api/musicians/me/bookings') as List<dynamic>;
   }
 
-  String _dateKey(DateTime value) => '${value.year.toString().padLeft(4, '0')}-'
+  Future<void> _loadPayoutDestination() async {
+    payoutDestination =
+        await widget.api.get('/api/musicians/me/payout-destination')
+            as Map<String, dynamic>;
+  }
+
+  Future<void> _editPayoutDestination() async {
+    var type = payoutDestination?['destination_type']?.toString() ?? 'clabe';
+    final number = TextEditingController();
+    var saving = false;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1C1235),
+      showDragHandle: true,
+      builder:
+          (sheetContext) => StatefulBuilder(
+            builder:
+                (_, setSheetState) => Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    20,
+                    4,
+                    20,
+                    MediaQuery.viewInsetsOf(sheetContext).bottom + 24,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text(
+                        'Cuenta para recibir tu dinero',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 21,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Se habilitó porque Stripe confirmó tu primer contrato pagado. '
+                        'El número se guarda cifrado y después sólo verás sus últimos 4 dígitos.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: .68),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      DropdownButtonFormField<String>(
+                        initialValue: type,
+                        decoration: const InputDecoration(
+                          labelText: 'Tipo de cuenta',
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'clabe',
+                            child: Text('CLABE interbancaria'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'debit_card',
+                            child: Text('Tarjeta de débito'),
+                          ),
+                        ],
+                        onChanged:
+                            saving
+                                ? null
+                                : (value) {
+                                  if (value != null) {
+                                    setSheetState(() => type = value);
+                                  }
+                                },
+                      ),
+                      const SizedBox(height: 13),
+                      TextField(
+                        controller: number,
+                        enabled: !saving,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                        ],
+                        maxLength: type == 'clabe' ? 18 : 16,
+                        obscureText: true,
+                        decoration: InputDecoration(
+                          labelText:
+                              type == 'clabe'
+                                  ? 'CLABE de 18 dígitos'
+                                  : 'Tarjeta de débito de 16 dígitos',
+                          prefixIcon: const Icon(
+                            Icons.account_balance_outlined,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      FilledButton.icon(
+                        onPressed:
+                            saving
+                                ? null
+                                : () async {
+                                  final expected = type == 'clabe' ? 18 : 16;
+                                  if (number.text.length != expected) {
+                                    ScaffoldMessenger.of(
+                                      sheetContext,
+                                    ).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'Escribe los $expected dígitos.',
+                                        ),
+                                      ),
+                                    );
+                                    return;
+                                  }
+                                  setSheetState(() => saving = true);
+                                  try {
+                                    final saved =
+                                        await widget.api.put(
+                                              '/api/musicians/me/payout-destination',
+                                              {
+                                                'destination_type': type,
+                                                'account_number': number.text,
+                                              },
+                                            )
+                                            as Map<String, dynamic>;
+                                    payoutDestination = saved;
+                                    if (!sheetContext.mounted) return;
+                                    Navigator.pop(sheetContext);
+                                    if (mounted) {
+                                      setState(() {});
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'Cuenta de depósito guardada',
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                  } on ApiException catch (error) {
+                                    if (sheetContext.mounted) {
+                                      ScaffoldMessenger.of(
+                                        sheetContext,
+                                      ).showSnackBar(
+                                        SnackBar(content: Text(error.message)),
+                                      );
+                                      setSheetState(() => saving = false);
+                                    }
+                                  }
+                                },
+                        icon: const Icon(Icons.lock_outline),
+                        label: Text(saving ? 'Guardando…' : 'Guardar cuenta'),
+                      ),
+                    ],
+                  ),
+                ),
+          ),
+    );
+    number.dispose();
+  }
+
+  String _dateKey(DateTime value) =>
+      '${value.year.toString().padLeft(4, '0')}-'
       '${value.month.toString().padLeft(2, '0')}-'
       '${value.day.toString().padLeft(2, '0')}';
 
@@ -155,116 +323,144 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
       isScrollControlled: true,
       backgroundColor: const Color(0xFF1C1235),
       showDragHandle: true,
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (_, setSheetState) {
-          final key = _dateKey(selected);
-          final isBusy = busyDates.contains(key);
-          return SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(18, 4, 18, 24),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Text('Agenda de la agrupación',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                            fontSize: 22, fontWeight: FontWeight.w800)),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Selecciona un día para marcarlo como ocupado o volver a liberarlo.',
-                      textAlign: TextAlign.center,
-                      style:
-                          TextStyle(color: Colors.white.withValues(alpha: .65)),
-                    ),
-                    const SizedBox(height: 14),
-                    Theme(
-                      data: Theme.of(context).copyWith(
-                        colorScheme: Theme.of(context).colorScheme.copyWith(
-                              primary: isBusy
-                                  ? const Color(0xFFE65A69)
-                                  : const Color(0xFF55D6C2),
-                            ),
-                      ),
-                      child: CalendarDatePicker(
-                        initialDate: selected,
-                        firstDate: today,
-                        lastDate: today.add(const Duration(days: 730)),
-                        onDateChanged: (value) =>
-                            setSheetState(() => selected = value),
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: (isBusy
-                                ? const Color(0xFFE65A69)
-                                : const Color(0xFF55D6C2))
-                            .withValues(alpha: .15),
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                      child: Row(children: [
-                        Icon(isBusy ? Icons.event_busy : Icons.event_available,
-                            color: isBusy
-                                ? const Color(0xFFFF8A96)
-                                : const Color(0xFF68DDCD)),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(isBusy
-                              ? 'Este día está marcado como ocupado.'
-                              : 'Este día está libre.'),
+      builder:
+          (sheetContext) => StatefulBuilder(
+            builder: (_, setSheetState) {
+              final key = _dateKey(selected);
+              final isBusy = busyDates.contains(key);
+              return SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 4, 18, 24),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const Text(
+                          'Agenda de la agrupación',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                          ),
                         ),
-                      ]),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Selecciona un día para marcarlo como ocupado o volver a liberarlo.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: .65),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Theme(
+                          data: Theme.of(context).copyWith(
+                            colorScheme: Theme.of(context).colorScheme.copyWith(
+                              primary:
+                                  isBusy
+                                      ? const Color(0xFFE65A69)
+                                      : const Color(0xFF55D6C2),
+                            ),
+                          ),
+                          child: CalendarDatePicker(
+                            initialDate: selected,
+                            firstDate: today,
+                            lastDate: today.add(const Duration(days: 730)),
+                            onDateChanged:
+                                (value) =>
+                                    setSheetState(() => selected = value),
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: (isBusy
+                                    ? const Color(0xFFE65A69)
+                                    : const Color(0xFF55D6C2))
+                                .withValues(alpha: .15),
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                isBusy
+                                    ? Icons.event_busy
+                                    : Icons.event_available,
+                                color:
+                                    isBusy
+                                        ? const Color(0xFFFF8A96)
+                                        : const Color(0xFF68DDCD),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  isBusy
+                                      ? 'Este día está marcado como ocupado.'
+                                      : 'Este día está libre.',
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size.fromHeight(52),
+                            backgroundColor:
+                                isBusy
+                                    ? const Color(0xFF3D8E80)
+                                    : const Color(0xFFB53F51),
+                          ),
+                          onPressed:
+                              saving
+                                  ? null
+                                  : () async {
+                                    setSheetState(() => saving = true);
+                                    try {
+                                      await widget.api.put(
+                                        '/api/musicians/me/busy-dates/$key',
+                                        {'busy': !isBusy},
+                                      );
+                                      if (!sheetContext.mounted) return;
+                                      if (isBusy) {
+                                        busyDates.remove(key);
+                                      } else {
+                                        busyDates.add(key);
+                                      }
+                                      if (mounted) setState(() {});
+                                      setSheetState(() => saving = false);
+                                    } catch (error) {
+                                      if (!sheetContext.mounted) return;
+                                      setSheetState(() => saving = false);
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text(error.toString()),
+                                          ),
+                                        );
+                                      }
+                                    }
+                                  },
+                          icon: Icon(
+                            isBusy ? Icons.event_available : Icons.event_busy,
+                          ),
+                          label: Text(
+                            saving
+                                ? 'Guardando…'
+                                : isBusy
+                                ? 'Liberar esta fecha'
+                                : 'Marcar como ocupado',
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 14),
-                    FilledButton.icon(
-                      style: FilledButton.styleFrom(
-                          minimumSize: const Size.fromHeight(52),
-                          backgroundColor: isBusy
-                              ? const Color(0xFF3D8E80)
-                              : const Color(0xFFB53F51)),
-                      onPressed: saving
-                          ? null
-                          : () async {
-                              setSheetState(() => saving = true);
-                              try {
-                                await widget.api.put(
-                                    '/api/musicians/me/busy-dates/$key',
-                                    {'busy': !isBusy});
-                                if (!sheetContext.mounted) return;
-                                if (isBusy) {
-                                  busyDates.remove(key);
-                                } else {
-                                  busyDates.add(key);
-                                }
-                                if (mounted) setState(() {});
-                                setSheetState(() => saving = false);
-                              } catch (error) {
-                                if (!sheetContext.mounted) return;
-                                setSheetState(() => saving = false);
-                                if (mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                          content: Text(error.toString())));
-                                }
-                              }
-                            },
-                      icon: Icon(
-                          isBusy ? Icons.event_available : Icons.event_busy),
-                      label: Text(saving
-                          ? 'Guardando…'
-                          : isBusy
-                              ? 'Liberar esta fecha'
-                              : 'Marcar como ocupado'),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-            ),
-          );
-        },
-      ),
+              );
+            },
+          ),
     );
   }
 
@@ -278,14 +474,15 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
   }
 
   bool numeric(String key) => const {
-        'member_count',
-        'hourly_rate',
-        'subwoofer_count',
-        'mid_speaker_count',
-        'audience_capacity',
-      }.contains(key);
+    'member_count',
+    'hourly_rate',
+    'subwoofer_count',
+    'mid_speaker_count',
+    'audience_capacity',
+  }.contains(key);
 
-  String label(String key) => const {
+  String label(String key) =>
+      const {
         'contact_name': 'Nombre de contacto',
         'admin_phone': 'Celular privado para soporte administrativo',
         'city': 'Ciudad',
@@ -307,28 +504,34 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
     if (!form.currentState!.validate()) return;
     setState(() => busy = true);
     try {
-      final saved = await widget.api.put('/api/musicians/me', {
-        for (final entry in fields.entries)
-          if (entry.key != 'admin_phone' || entry.value.text.trim().isNotEmpty)
-            entry.key: numeric(entry.key)
-                ? (entry.key == 'hourly_rate'
-                    ? double.parse(entry.value.text)
-                    : int.parse(entry.value.text))
-                : entry.key == 'equipment_brands'
-                    ? entry.value.text.split(',')
-                    : entry.value.text,
-        'includes_sound': sound,
-      }) as Map<String, dynamic>;
+      final saved =
+          await widget.api.put('/api/musicians/me', {
+                for (final entry in fields.entries)
+                  if (entry.key != 'admin_phone' ||
+                      entry.value.text.trim().isNotEmpty)
+                    entry.key:
+                        numeric(entry.key)
+                            ? (entry.key == 'hourly_rate'
+                                ? double.parse(entry.value.text)
+                                : int.parse(entry.value.text))
+                            : entry.key == 'equipment_brands'
+                            ? entry.value.text.split(',')
+                            : entry.value.text,
+                'includes_sound': sound,
+              })
+              as Map<String, dynamic>;
       profile = saved;
       editing = false;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Tu perfil ya está publicado')));
+          const SnackBar(content: Text('Tu perfil ya está publicado')),
+        );
       }
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(error.toString())));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
       }
     } finally {
       if (mounted) setState(() => busy = false);
@@ -336,27 +539,63 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
   }
 
   Future<void> pick(String type, int max) async {
-    final file = type == 'video'
-        ? await picker.pickVideo(source: ImageSource.gallery)
-        : await picker.pickImage(source: ImageSource.gallery, imageQuality: 88);
-    if (file == null || !mounted) return;
-    final position = await showDialog<int>(
-      context: context,
-      builder: (dialogContext) => SimpleDialog(
-        title: Text('Selecciona una posición (1–$max)'),
-        children: [
-          for (var i = 1; i <= max; i++)
-            SimpleDialogOption(
-                onPressed: () => Navigator.pop(dialogContext, i),
-                child: Text('Posición $i')),
-        ],
-      ),
-    );
-    if (position == null) return;
-    await widget.api.uploadMedia(File(file.path), type, position);
-    if (!mounted) return;
-    setState(() => loading = true);
-    await loadProfile();
+    try {
+      final file =
+          type == 'video'
+              ? await picker.pickVideo(source: ImageSource.gallery)
+              : await picker.pickImage(
+                source: ImageSource.gallery,
+                imageQuality: 88,
+              );
+      if (file == null || !mounted) return;
+      final position = await showDialog<int>(
+        context: context,
+        builder:
+            (dialogContext) => SimpleDialog(
+              title: Text('Selecciona una posición (1–$max)'),
+              children: [
+                for (var i = 1; i <= max; i++)
+                  SimpleDialogOption(
+                    onPressed: () => Navigator.pop(dialogContext, i),
+                    child: Text('Posición $i'),
+                  ),
+              ],
+            ),
+      );
+      if (position == null) return;
+      await widget.api.uploadMedia(
+        File(file.path),
+        type,
+        position,
+        mimeType: file.mimeType,
+      );
+      if (!mounted) return;
+      setState(() => loading = true);
+      await loadProfile();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              type == 'video' ? 'Video publicado.' : 'Foto publicada.',
+            ),
+          ),
+        );
+      }
+    } on ApiException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No se pudo subir el archivo: $error')),
+        );
+      }
+    } finally {
+      if (mounted && loading) setState(() => loading = false);
+    }
   }
 
   Future<void> chooseAvatar() async {
@@ -382,74 +621,92 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        extendBodyBehindAppBar: true,
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          title: const Text('Mi espacio'),
-          actions: rulesAccepted
+    extendBodyBehindAppBar: true,
+    appBar: AppBar(
+      backgroundColor: Colors.transparent,
+      title: const Text('Mi espacio'),
+      actions:
+          rulesAccepted
               ? [
+                IconButton(
+                  tooltip: 'Salto musical',
+                  onPressed:
+                      () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const RhythmGameScreen(),
+                        ),
+                      ),
+                  icon: const Icon(Icons.sports_esports_rounded),
+                ),
+                if (profile != null && !editing)
                   IconButton(
-                      tooltip: 'Salto musical',
-                      onPressed: () => Navigator.of(context).push(
-                          MaterialPageRoute(
-                              builder: (_) => const RhythmGameScreen())),
-                      icon: const Icon(Icons.sports_esports_rounded)),
-                  if (profile != null && !editing)
-                    IconButton(
-                        onPressed: () => setState(() => editing = true),
-                        icon: const Icon(Icons.edit_outlined)),
-                  IconButton(
-                      onPressed: widget.onLogout,
-                      icon: const Icon(Icons.logout)),
-                ]
+                    onPressed: () => setState(() => editing = true),
+                    icon: const Icon(Icons.edit_outlined),
+                  ),
+                IconButton(
+                  onPressed: widget.onLogout,
+                  icon: const Icon(Icons.logout),
+                ),
+              ]
               : [
-                  IconButton(
-                      onPressed: widget.onLogout,
-                      icon: const Icon(Icons.logout)),
-                ],
-        ),
-        body: GlassBackground(
-          child: SafeArea(
-            child: rulesLoading
+                IconButton(
+                  onPressed: widget.onLogout,
+                  icon: const Icon(Icons.logout),
+                ),
+              ],
+    ),
+    body: GlassBackground(
+      child: SafeArea(
+        child:
+            rulesLoading
                 ? const Center(child: CircularProgressIndicator())
                 : !rulesAccepted
-                    ? GroupRulesScreen(
-                        onAccept: _acceptRules,
-                        onDecline: widget.onLogout,
-                      )
-                    : loading
-                        ? const Center(child: CircularProgressIndicator())
-                        : AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 280),
-                            child: editing ? _editor() : _socialProfile(),
-                          ),
-          ),
-        ),
-      );
+                ? GroupRulesScreen(
+                  onAccept: _acceptRules,
+                  onDecline: widget.onLogout,
+                )
+                : loading
+                ? const Center(child: CircularProgressIndicator())
+                : AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 280),
+                  child: editing ? _editor() : _socialProfile(),
+                ),
+      ),
+    ),
+  );
 
   Widget _socialProfile() {
     final data = profile!;
-    final newSales = bookings
-        .cast<Map<String, dynamic>>()
-        .where((item) => item['is_new_sale'] == true)
-        .toList();
-    final contractHistory = bookings
-        .cast<Map<String, dynamic>>()
-        .where((item) => item['is_new_sale'] != true)
-        .toList();
+    final newSales =
+        bookings
+            .cast<Map<String, dynamic>>()
+            .where((item) => item['is_new_sale'] == true)
+            .toList();
+    final contractHistory =
+        bookings
+            .cast<Map<String, dynamic>>()
+            .where((item) => item['is_new_sale'] != true)
+            .toList();
     final media = data['media'] as List<dynamic>? ?? [];
-    final avatar = media
-        .cast<Map<String, dynamic>>()
-        .where((item) => item['media_type'] == 'profile_photo')
-        .firstOrNull;
-    final photos = media
-        .cast<Map<String, dynamic>>()
-        .where((item) => item['media_type'] == 'photo')
-        .toList();
-    final videos = media
-        .cast<Map<String, dynamic>>()
-        .where((item) => item['media_type'] == 'video')
-        .toList();
+    final avatar =
+        media
+            .cast<Map<String, dynamic>>()
+            .where((item) => item['media_type'] == 'profile_photo')
+            .firstOrNull;
+    final photos =
+        media
+            .cast<Map<String, dynamic>>()
+            .where((item) => item['media_type'] == 'photo')
+            .toList()
+          ..sort(
+            (first, second) =>
+                (first['position'] as num).compareTo(second['position'] as num),
+          );
+    final videos =
+        media
+            .cast<Map<String, dynamic>>()
+            .where((item) => item['media_type'] == 'video')
+            .toList();
     return ListView(
       key: const ValueKey('profile'),
       padding: const EdgeInsets.fromLTRB(18, 12, 18, 32),
@@ -469,128 +726,239 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
                     onTap: chooseAvatar,
                   ),
                   Positioned(
-                      left: -4,
-                      bottom: 2,
-                      child: CircleAvatar(
-                          radius: 17,
-                          child: IconButton(
-                              padding: EdgeInsets.zero,
-                              iconSize: 17,
-                              onPressed: chooseAvatar,
-                              icon: const Icon(Icons.palette_outlined)))),
+                    left: -4,
+                    bottom: 2,
+                    child: CircleAvatar(
+                      radius: 17,
+                      child: IconButton(
+                        padding: EdgeInsets.zero,
+                        iconSize: 17,
+                        onPressed: chooseAvatar,
+                        icon: const Icon(Icons.palette_outlined),
+                      ),
+                    ),
+                  ),
                   Positioned(
-                      right: -4,
-                      bottom: 2,
-                      child: CircleAvatar(
-                          radius: 17,
-                          child: IconButton(
-                              padding: EdgeInsets.zero,
-                              iconSize: 17,
-                              onPressed: () => pick('profile_photo', 1),
-                              icon: const Icon(Icons.camera_alt)))),
+                    right: -4,
+                    bottom: 2,
+                    child: CircleAvatar(
+                      radius: 17,
+                      child: IconButton(
+                        padding: EdgeInsets.zero,
+                        iconSize: 17,
+                        onPressed: () => pick('profile_photo', 1),
+                        icon: const Icon(Icons.camera_alt),
+                      ),
+                    ),
+                  ),
                 ],
               ),
               const SizedBox(height: 16),
-              Text(data['group_name'],
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context)
-                      .textTheme
-                      .headlineSmall
-                      ?.copyWith(fontWeight: FontWeight.w800)),
-              const SizedBox(height: 5),
-              Text('${data['group_type']} · ${data['musical_style']}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Color(0xFFBFA7ED))),
-              const SizedBox(height: 6),
-              Row(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(Icons.location_on_outlined,
-                    size: 17, color: Color(0xFF68DDCD)),
-                const SizedBox(width: 5),
-                Flexible(
-                  child: Text(
-                    '${data['city']}, ${data['municipality']}, ${data['state']}',
-                    textAlign: TextAlign.center,
-                    style:
-                        TextStyle(color: Colors.white.withValues(alpha: .70)),
-                  ),
+              Text(
+                data['group_name'],
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
                 ),
-              ]),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                'Corriente musical: ${data['musical_style']}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Color(0xFFBFA7ED)),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.location_on_outlined,
+                    size: 17,
+                    color: Color(0xFF68DDCD),
+                  ),
+                  const SizedBox(width: 5),
+                  Flexible(
+                    child: Text(
+                      '${data['city']}, ${data['municipality']}, ${data['state']}',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: .70),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 10),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: const Color(0xFFFFC857).withValues(alpha: .12),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
-                      color: const Color(0xFFFFC857).withValues(alpha: .28)),
-                ),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(Icons.star_rounded,
-                      color: Color(0xFFFFC857), size: 22),
-                  const SizedBox(width: 6),
-                  Text(
-                    data['rating'] == null
-                        ? 'Aún sin calificaciones'
-                        : '${data['rating']} · ${data['review_count']} ${data['review_count'] == 1 ? 'calificación' : 'calificaciones'}',
-                    style: const TextStyle(fontWeight: FontWeight.w800),
+                    color: const Color(0xFFFFC857).withValues(alpha: .28),
                   ),
-                ]),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.star_rounded,
+                      color: Color(0xFFFFC857),
+                      size: 22,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      data['rating'] == null
+                          ? 'Aún sin calificaciones'
+                          : '${data['rating']} · ${data['review_count']} ${data['review_count'] == 1 ? 'calificación' : 'calificaciones'}',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(height: 14),
               const Chip(
-                  avatar: Icon(Icons.verified, size: 18),
-                  label: Text('Agrupación disponible')),
+                avatar: Icon(Icons.verified, size: 18),
+                label: Text('Agrupación disponible'),
+              ),
               const SizedBox(height: 14),
-              Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-                _stat('${data['member_count']}', 'Integrantes'),
-                _stat('${data['audience_capacity']}', 'Personas'),
-                _stat('\$${data['hourly_rate']}', 'Por hora'),
-              ]),
+              Row(
+                children: [
+                  Expanded(
+                    child: _stat('${data['member_count']}', 'Integrantes'),
+                  ),
+                  Expanded(
+                    child: _stat(
+                      '${data['audience_capacity']} personas',
+                      'Sonido aproximado para',
+                    ),
+                  ),
+                  Expanded(
+                    child: _stat('\$${data['hourly_rate']}', 'Por hora'),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
+        if (payoutDestination?['eligible'] == true) ...[
+          const SizedBox(height: 16),
+          GlassCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(
+                      Icons.account_balance_wallet_outlined,
+                      color: Color(0xFF68DDCD),
+                    ),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Cuenta para recibir tu dinero',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  payoutDestination?['configured'] == true
+                      ? '${payoutDestination?['destination_type'] == 'clabe' ? 'CLABE' : 'Tarjeta de débito'} terminada en •••• ${payoutDestination?['last4']}'
+                      : 'Tu primer contrato ya fue pagado. Registra dónde deseas recibir tus depósitos.',
+                  style: TextStyle(
+                    color:
+                        payoutDestination?['configured'] == true
+                            ? const Color(0xFF68DDCD)
+                            : const Color(0xFFFFC857),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                FilledButton.tonalIcon(
+                  onPressed: _editPayoutDestination,
+                  icon: Icon(
+                    payoutDestination?['configured'] == true
+                        ? Icons.edit_outlined
+                        : Icons.add_card_outlined,
+                  ),
+                  label: Text(
+                    payoutDestination?['configured'] == true
+                        ? 'Cambiar cuenta'
+                        : 'Registrar cuenta',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: 16),
         GlassCard(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Nuestra historia',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 10),
-          Text(data['description'],
-              style: TextStyle(
-                  height: 1.45, color: Colors.white.withValues(alpha: .78))),
-          const SizedBox(height: 14),
-          Wrap(spacing: 8, runSpacing: 8, children: [
-            if (data['includes_sound'])
-              const Chip(
-                  avatar: Icon(Icons.speaker, size: 17),
-                  label: Text('Incluye sonido')),
-            for (final brand in data['equipment_brands'])
-              Chip(label: Text(brand)),
-          ]),
-        ])),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Nuestra historia',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                data['description'],
+                style: TextStyle(
+                  height: 1.45,
+                  color: Colors.white.withValues(alpha: .78),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  if (data['includes_sound'])
+                    const Chip(
+                      avatar: Icon(Icons.speaker, size: 17),
+                      label: Text('Incluye sonido'),
+                    ),
+                  for (final brand in data['equipment_brands'])
+                    Chip(label: Text(brand)),
+                ],
+              ),
+            ],
+          ),
+        ),
         if (newSales.isNotEmpty) ...[
           const SizedBox(height: 16),
           GlassCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Row(children: [
-                  CircleAvatar(
-                    backgroundColor: Color(0x3335D8C6),
-                    child: Icon(Icons.notifications_active,
-                        color: Color(0xFF68DDCD)),
-                  ),
-                  SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      '¡Felicidades! Has vendido una fecha. Revisa los datos.',
-                      style:
-                          TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                const Row(
+                  children: [
+                    CircleAvatar(
+                      backgroundColor: Color(0x3335D8C6),
+                      child: Icon(
+                        Icons.notifications_active,
+                        color: Color(0xFF68DDCD),
+                      ),
                     ),
-                  ),
-                ]),
+                    SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        '¡Felicidades! Has vendido una fecha. Revisa los datos.',
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 14),
                 for (final item in newSales) ...[
                   _contractCard(item),
@@ -606,22 +974,32 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Row(children: [
-                  CircleAvatar(
-                    backgroundColor: Color(0x33BFA1FF),
-                    child: Icon(Icons.receipt_long_outlined,
-                        color: Color(0xFFBFA1FF)),
-                  ),
-                  SizedBox(width: 12),
-                  Expanded(
-                    child: Text('Mis contratos',
+                const Row(
+                  children: [
+                    CircleAvatar(
+                      backgroundColor: Color(0x33BFA1FF),
+                      child: Icon(
+                        Icons.receipt_long_outlined,
+                        color: Color(0xFFBFA1FF),
+                      ),
+                    ),
+                    SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Mis contratos',
                         style: TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.w800)),
-                  ),
-                ]),
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 6),
-                Text('Del más reciente al más antiguo.',
-                    style: TextStyle(color: Colors.white60)),
+                Text(
+                  'Del más reciente al más antiguo.',
+                  style: TextStyle(color: Colors.white60),
+                ),
                 const SizedBox(height: 14),
                 for (final item in contractHistory) ...[
                   _contractCard(item),
@@ -636,41 +1014,56 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(children: [
-                const Icon(Icons.calendar_month, color: Color(0xFFBFA1FF)),
-                const SizedBox(width: 10),
-                const Expanded(
-                  child: Text('Mi calendario',
-                      style:
-                          TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-                ),
-                Text('${busyDates.length} ocupados',
-                    style:
-                        TextStyle(color: Colors.white.withValues(alpha: .58))),
-              ]),
+              Row(
+                children: [
+                  const Icon(Icons.calendar_month, color: Color(0xFFBFA1FF)),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text(
+                      'Mi calendario',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '${busyDates.length} ocupados',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: .58),
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 8),
               Text(
-                  'Estas fechas sólo se revelan cuando un cliente consulta un día.',
-                  style: TextStyle(color: Colors.white.withValues(alpha: .66))),
+                'Estas fechas sólo se revelan cuando un cliente consulta un día.',
+                style: TextStyle(color: Colors.white.withValues(alpha: .66)),
+              ),
               if (busyDates.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 Wrap(
                   spacing: 7,
                   runSpacing: 7,
-                  children: (busyDates.toList()..sort())
-                      .map((day) => Chip(
-                            avatar: const Icon(Icons.event_busy, size: 16),
-                            label: Text(_formatDate(day)),
-                            backgroundColor:
-                                const Color(0xFFE65A69).withValues(alpha: .18),
-                          ))
-                      .toList(),
+                  children:
+                      (busyDates.toList()..sort())
+                          .map(
+                            (day) => Chip(
+                              avatar: const Icon(Icons.event_busy, size: 16),
+                              label: Text(_formatDate(day)),
+                              backgroundColor: const Color(
+                                0xFFE65A69,
+                              ).withValues(alpha: .18),
+                            ),
+                          )
+                          .toList(),
                 ),
               ],
               const SizedBox(height: 12),
               FilledButton.tonalIcon(
                 style: FilledButton.styleFrom(
-                    minimumSize: const Size.fromHeight(48)),
+                  minimumSize: const Size.fromHeight(48),
+                ),
                 onPressed: _openBusyCalendar,
                 icon: const Icon(Icons.edit_calendar),
                 label: const Text('Administrar fechas'),
@@ -680,42 +1073,66 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
         ),
         const SizedBox(height: 20),
         _sectionTitle(
-            'Momentos', '${photos.length}/5 fotos', () => pick('photo', 5)),
+          'Momentos',
+          '${photos.length}/5 fotos',
+          () => pick('photo', 5),
+        ),
         const SizedBox(height: 10),
-        SizedBox(
-            height: 150,
-            child: photos.isEmpty
-                ? _emptyMedia(Icons.photo_library_outlined,
-                    'Agrega tus mejores fotografías')
-                : ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: photos.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 10),
-                    itemBuilder: (_, i) => ClipRRect(
-                        borderRadius: BorderRadius.circular(20),
-                        child: Image.network(
-                            widget.api.mediaUrl(photos[i]['url'])!,
-                            width: 190,
-                            fit: BoxFit.cover)))),
+        photos.isEmpty
+            ? SizedBox(
+              height: 150,
+              child: _emptyMedia(
+                Icons.photo_library_outlined,
+                'Agrega tus mejores fotografías',
+              ),
+            )
+            : Column(
+              children: [
+                for (final photo in photos) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: ColoredBox(
+                      color: Colors.black26,
+                      child: Image.network(
+                        widget.api.mediaUrl(photo['url'])!,
+                        width: double.infinity,
+                        fit: BoxFit.fitWidth,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                ],
+              ],
+            ),
         const SizedBox(height: 20),
         _sectionTitle(
-            'En escena', '${videos.length}/2 videos', () => pick('video', 2)),
+          'En escena',
+          '${videos.length}/2 videos',
+          () => pick('video', 2),
+        ),
         const SizedBox(height: 10),
         videos.isEmpty
-            ? _emptyMedia(Icons.smart_display_outlined,
-                'Comparte una presentación en vivo')
-            : Wrap(spacing: 10, children: [
+            ? _emptyMedia(
+              Icons.smart_display_outlined,
+              'Comparte una presentación en vivo',
+            )
+            : Wrap(
+              spacing: 10,
+              children: [
                 for (var index = 0; index < videos.length; index++)
                   GlassCard(
-                      padding: const EdgeInsets.all(14),
-                      child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.play_circle_fill),
-                            SizedBox(width: 8),
-                            Text('Video en vivo')
-                          ]))
-              ]),
+                    padding: const EdgeInsets.all(14),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.play_circle_fill),
+                        SizedBox(width: 8),
+                        Text('Video en vivo'),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
       ],
     );
   }
@@ -733,32 +1150,55 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(_formatDate(item['event_date'].toString()),
-              style: const TextStyle(
-                  color: Color(0xFF68DDCD),
-                  fontWeight: FontWeight.w800,
-                  fontSize: 17)),
+          Text(
+            _formatDate(item['event_date'].toString()),
+            style: const TextStyle(
+              color: Color(0xFF68DDCD),
+              fontWeight: FontWeight.w800,
+              fontSize: 17,
+            ),
+          ),
           const SizedBox(height: 8),
-          Row(children: [
-            const Icon(Icons.location_on_outlined, size: 19),
-            const SizedBox(width: 7),
-            Expanded(child: Text(item['venue'].toString())),
-          ]),
+          Row(
+            children: [
+              const Icon(Icons.location_on_outlined, size: 19),
+              const SizedBox(width: 7),
+              Expanded(child: Text(item['venue'].toString())),
+            ],
+          ),
           const SizedBox(height: 7),
-          Row(children: [
-            const Icon(Icons.schedule, size: 19),
-            const SizedBox(width: 7),
-            Text(
-                '${_formatTime(item['start_time'])} – ${_formatTime(item['end_time'])}'),
-          ]),
+          Row(
+            children: [
+              const Icon(Icons.schedule, size: 19),
+              const SizedBox(width: 7),
+              Text(
+                '${_formatTime(item['start_time'])} – ${_formatTime(item['end_time'])}',
+              ),
+            ],
+          ),
           const SizedBox(height: 7),
-          Row(children: [
-            const Icon(Icons.person_outline, size: 19),
-            const SizedBox(width: 7),
-            Expanded(
-                child:
-                    Text('${item['client_name']} · ${item['client_email']}')),
-          ]),
+          Row(
+            children: [
+              const Icon(Icons.person_outline, size: 19),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text('${item['client_name']} · ${item['client_email']}'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 7),
+          Row(
+            children: [
+              const Icon(Icons.account_balance_wallet_outlined, size: 19),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  'Tu saldo: \$${((item['musician_earnings_cents'] as num) / 100).toStringAsFixed(2)} MXN · '
+                  '${const {'awaiting_payment': 'esperando pago', 'musician_funds_held': 'retenido hasta la calificación', 'disputed': 'en revisión', 'approved_for_payout': 'autorizado para depósito', 'pending_connect_account': 'falta vincular Stripe Connect', 'transfer_failed': 'transferencia pendiente de reintento', 'transferred': 'enviado a tu saldo de Stripe', 'paid_out': 'depositado'}[item['payout_status']] ?? item['payout_status']}',
+                ),
+              ),
+            ],
+          ),
           if (recommendation != null && recommendation.isNotEmpty) ...[
             const SizedBox(height: 12),
             Container(
@@ -771,13 +1211,20 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Row(children: [
-                    Icon(Icons.lightbulb_outline,
-                        size: 18, color: Color(0xFFFFC857)),
-                    SizedBox(width: 6),
-                    Text('Recomendación privada del cliente',
-                        style: TextStyle(fontWeight: FontWeight.w800)),
-                  ]),
+                  const Row(
+                    children: [
+                      Icon(
+                        Icons.lightbulb_outline,
+                        size: 18,
+                        color: Color(0xFFFFC857),
+                      ),
+                      SizedBox(width: 6),
+                      Text(
+                        'Recomendación privada del cliente',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 6),
                   Text(recommendation),
                 ],
@@ -786,118 +1233,149 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
           ],
           const SizedBox(height: 10),
           FilledButton.tonalIcon(
-            onPressed: () => showBookingChat(
-              context,
-              api: widget.api,
-              booking: item,
+            onPressed:
+                () => showBookingChat(context, api: widget.api, booking: item),
+            icon: Icon(
+              item['chat_active'] == true
+                  ? Icons.forum_outlined
+                  : Icons.lock_clock_outlined,
             ),
-            icon: Icon(item['chat_active'] == true
-                ? Icons.forum_outlined
-                : Icons.lock_clock_outlined),
-            label: Text(item['chat_active'] == true
-                ? 'Chat del evento'
-                : 'Chat disponible en el evento'),
+            label: Text(
+              item['chat_active'] == true
+                  ? 'Chat del evento'
+                  : 'Chat disponible en el evento',
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _stat(String value, String label) => Column(children: [
-        Text(value,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-        Text(label,
-            style: TextStyle(
-                fontSize: 12, color: Colors.white.withValues(alpha: .58))),
-      ]);
+  Widget _stat(String value, String label) => Column(
+    children: [
+      Text(
+        value,
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+      ),
+      Text(
+        label,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          fontSize: 12,
+          color: Colors.white.withValues(alpha: .58),
+        ),
+      ),
+    ],
+  );
 
   Widget _sectionTitle(String title, String counter, VoidCallback action) =>
-      Row(children: [
-        Expanded(
-            child: Text(title,
-                style: const TextStyle(
-                    fontSize: 20, fontWeight: FontWeight.w700))),
-        Text(counter,
-            style: TextStyle(color: Colors.white.withValues(alpha: .55))),
-        IconButton(
-            onPressed: action, icon: const Icon(Icons.add_circle_outline)),
-      ]);
+      Row(
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+            ),
+          ),
+          Text(
+            counter,
+            style: TextStyle(color: Colors.white.withValues(alpha: .55)),
+          ),
+          IconButton(
+            onPressed: action,
+            icon: const Icon(Icons.add_circle_outline),
+          ),
+        ],
+      );
 
   Widget _emptyMedia(IconData icon, String text) => GlassCard(
-        child: Center(
-            child:
-                Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+    child: Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
           Icon(icon, size: 38, color: const Color(0xFFBFA1FF)),
           const SizedBox(height: 8),
-          Text(text)
-        ])),
-      );
+          Text(text),
+        ],
+      ),
+    ),
+  );
 
   Widget _editor() => Form(
-        key: form,
-        child: ListView(
-          key: const ValueKey('editor'),
-          padding: const EdgeInsets.fromLTRB(18, 12, 18, 32),
-          children: [
-            GlassCard(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                  Text(
-                      profile == null
-                          ? 'Crea tu identidad musical'
-                          : 'Edita tu perfil',
-                      style: Theme.of(context)
-                          .textTheme
-                          .headlineSmall
-                          ?.copyWith(fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 8),
-                  Text('Esta información será visible para todos los clientes.',
-                      style: TextStyle(
-                          color: Colors.white.withValues(alpha: .65))),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'El celular es privado: sólo se guardará para soporte administrativo.',
-                    style: TextStyle(color: Color(0xFFFFC857), fontSize: 12),
-                  ),
-                  const SizedBox(height: 20),
-                  for (final entry in fields.entries) ...[
-                    TextFormField(
-                      controller: entry.value,
-                      keyboardType: numeric(entry.key)
+    key: form,
+    child: ListView(
+      key: const ValueKey('editor'),
+      padding: const EdgeInsets.fromLTRB(18, 12, 18, 32),
+      children: [
+        GlassCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                profile == null
+                    ? 'Crea tu identidad musical'
+                    : 'Edita tu perfil',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Esta información será visible para todos los clientes.',
+                style: TextStyle(color: Colors.white.withValues(alpha: .65)),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'El celular es privado: sólo se guardará para soporte administrativo.',
+                style: TextStyle(color: Color(0xFFFFC857), fontSize: 12),
+              ),
+              const SizedBox(height: 20),
+              for (final entry in fields.entries) ...[
+                TextFormField(
+                  controller: entry.value,
+                  keyboardType:
+                      numeric(entry.key)
                           ? TextInputType.number
                           : TextInputType.text,
-                      maxLines: entry.key == 'description' ? 4 : 1,
-                      decoration: InputDecoration(labelText: label(entry.key)),
-                      validator: (value) => value == null ||
-                              value.trim().isEmpty &&
-                                  (entry.key != 'admin_phone' ||
-                                      profile?['admin_phone_saved'] != true)
-                          ? 'Campo obligatorio'
-                          : null,
-                    ),
-                    const SizedBox(height: 13),
-                  ],
-                  SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      value: sound,
-                      onChanged: (value) => setState(() => sound = value),
-                      title: const Text('Incluye equipo de sonido'),
-                      secondary: const Icon(Icons.speaker_group_outlined)),
-                  const SizedBox(height: 10),
-                  FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                        minimumSize: const Size.fromHeight(54)),
-                    onPressed: busy ? null : save,
-                    icon: const Icon(Icons.publish),
-                    label: Text(busy ? 'Guardando…' : 'Guardar y publicar'),
-                  ),
-                  if (profile != null)
-                    TextButton(
-                        onPressed: () => setState(() => editing = false),
-                        child: const Text('Cancelar')),
-                ])),
-          ],
+                  maxLines: entry.key == 'description' ? 4 : 1,
+                  decoration: InputDecoration(labelText: label(entry.key)),
+                  validator:
+                      (value) =>
+                          value == null ||
+                                  value.trim().isEmpty &&
+                                      (entry.key != 'admin_phone' ||
+                                          profile?['admin_phone_saved'] != true)
+                              ? 'Campo obligatorio'
+                              : null,
+                ),
+                const SizedBox(height: 13),
+              ],
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: sound,
+                onChanged: (value) => setState(() => sound = value),
+                title: const Text('Incluye equipo de sonido'),
+                secondary: const Icon(Icons.speaker_group_outlined),
+              ),
+              const SizedBox(height: 10),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(54),
+                ),
+                onPressed: busy ? null : save,
+                icon: const Icon(Icons.publish),
+                label: Text(busy ? 'Guardando…' : 'Guardar y publicar'),
+              ),
+              if (profile != null)
+                TextButton(
+                  onPressed: () => setState(() => editing = false),
+                  child: const Text('Cancelar'),
+                ),
+            ],
+          ),
         ),
-      );
+      ],
+    ),
+  );
 }

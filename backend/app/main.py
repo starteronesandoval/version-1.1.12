@@ -6,12 +6,15 @@ import re
 import secrets
 import smtplib
 import ssl
+import base64
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from email.message import EmailMessage
 from pathlib import Path
 from uuid import uuid4
 from zoneinfo import ZoneInfo
+
+from cryptography.fernet import Fernet
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,19 +26,22 @@ from sqlalchemy.orm import Session, selectinload
 
 from .auth import (create_token, current_user, hash_password, require_role,
                    verify_google_token, verify_password)
-from .billing import router as billing_router
+from .billing import release_musician_funds, router as billing_router
 from .config import settings
 from .database import get_db
 from .models import (AvatarChoice, Booking, BookingReview, ChatMessage, ClientAvatar,
                      ClientProfile, Media, MediaType, MusicianBusyDate,
-                     MusicianProfile, PasswordResetCode, RulesAcceptance,
+                     MusicianProfile, MusicianPayoutDestination, PasswordResetCode, RulesAcceptance,
                      User, UserRole)
-from .schemas import (AvailabilityResponse, AvatarChoiceUpdate, BookingCreate,
+from .schemas import (AdminPayoutAction, AvailabilityResponse, AvatarChoiceUpdate, BookingCreate,
+                      BookingDisputeCreate,
                       BookingResponse, BusyDateResponse, BusyDateUpdate,
                       BookingReviewCreate, BookingReviewResponse,
                       ChatMessageCreate, ChatMessageResponse,
                       ClientProfileResponse, ClientProfileUpsert, LoginRequest,
                       MusicianProfileResponse, MusicianProfileUpsert,
+                      PayoutDestinationResponse, PayoutDestinationUpsert,
+                      StripeConnectAccountUpdate,
                       GoogleAuthRequest, PasswordResetConfirm, PasswordResetRequest,
                       PasswordResetRequestResponse, RegisterRequest,
                       RulesAcceptanceResponse, TokenResponse, UserResponse)
@@ -48,6 +54,12 @@ app = FastAPI(
     docs_url=None if settings.app_env == "production" else "/docs",
     redoc_url=None if settings.app_env == "production" else "/redoc",
 )
+
+
+CLIENT_PRICE_MULTIPLIER = Decimal("1.071")
+CLIENT_SURCHARGE_RATE = Decimal("0.071")
+CLIENT_PLATFORM_FEE_RATE = Decimal("0.03")
+MUSICIAN_NET_RATE = Decimal("0.97")
 app.include_router(billing_router)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 app.add_middleware(
@@ -77,6 +89,34 @@ GROUP_RULES_VERSION = "GARIBALDY_GROUP_RULES_V1"
 logger = logging.getLogger(__name__)
 
 
+def payout_cipher() -> Fernet:
+    key = hashlib.sha256(settings.secret_key.encode("utf-8")).digest()
+    return Fernet(base64.urlsafe_b64encode(key))
+
+
+def valid_clabe(value: str) -> bool:
+    if len(value) != 18 or not value.isdigit():
+        return False
+    weights = (3, 7, 1)
+    total = sum(int(digit) * weights[index % 3]
+                for index, digit in enumerate(value[:17]))
+    return (10 - total % 10) % 10 == int(value[-1])
+
+
+def valid_card_number(value: str) -> bool:
+    if len(value) != 16 or not value.isdigit():
+        return False
+    total = 0
+    for index, digit in enumerate(reversed(value)):
+        number = int(digit)
+        if index % 2 == 1:
+            number *= 2
+            if number > 9:
+                number -= 9
+        total += number
+    return total % 10 == 0
+
+
 def csv(values: list[str]) -> str:
     return json.dumps([v.strip() for v in values if v.strip()], ensure_ascii=False)
 
@@ -102,18 +142,35 @@ def booking_price_snapshot(hourly_rate: float, start_time, end_time) -> dict:
         .quantize(Decimal("1"), rounding=ROUND_HALF_UP)
     )
     service_fee_cents = int(
-        (Decimal(subtotal_cents) * Decimal("0.066")).quantize(
+        (Decimal(subtotal_cents) * CLIENT_SURCHARGE_RATE).quantize(
             Decimal("1"), rounding=ROUND_HALF_UP
         )
     )
+    musician_earnings_cents = int(
+        (Decimal(subtotal_cents) * MUSICIAN_NET_RATE).quantize(
+            Decimal("1"), rounding=ROUND_HALF_UP
+        )
+    )
+    client_platform_fee_cents = int(
+        (Decimal(subtotal_cents) * CLIENT_PLATFORM_FEE_RATE).quantize(
+            Decimal("1"), rounding=ROUND_HALF_UP
+        )
+    )
+    musician_platform_fee_cents = subtotal_cents - musician_earnings_cents
+    platform_fee_cents = client_platform_fee_cents + musician_platform_fee_cents
+    stripe_fee_estimate_cents = service_fee_cents - client_platform_fee_cents
     return {
         "hourly_rate_cents": hourly_rate_cents,
         "duration_minutes": duration_minutes,
         "subtotal_cents": subtotal_cents,
         "service_fee_cents": service_fee_cents,
         "total_cents": subtotal_cents + service_fee_cents,
+        "musician_earnings_cents": musician_earnings_cents,
+        "platform_fee_cents": platform_fee_cents,
+        "stripe_fee_estimate_cents": stripe_fee_estimate_cents,
         "currency": "mxn",
         "payment_status": "pending",
+        "payout_status": "awaiting_payment",
     }
 
 
@@ -211,17 +268,48 @@ def musician_profiles():
         selectinload(MusicianProfile.media),
         selectinload(MusicianProfile.user).selectinload(User.avatar_choice),
         selectinload(MusicianProfile.reviews),
+        selectinload(MusicianProfile.payout_destination),
     )
 
 
-def musician_out(profile: MusicianProfile) -> MusicianProfileResponse:
+def payout_eligible(profile: MusicianProfile, db: Session) -> bool:
+    return db.scalar(select(func.count(Booking.id)).where(
+        Booking.musician_id == profile.id,
+        Booking.payment_status == "paid",
+    )) > 0
+
+
+def payout_out(
+    profile: MusicianProfile, db: Session
+) -> PayoutDestinationResponse:
+    destination = profile.payout_destination
+    return PayoutDestinationResponse(
+        eligible=payout_eligible(profile, db),
+        configured=destination is not None,
+        destination_type=(destination.destination_type if destination else None),
+        last4=(destination.last4 if destination else None),
+        updated_at=(destination.updated_at if destination else None),
+        stripe_connect_ready=bool(
+            destination and destination.stripe_connected_account_id
+        ),
+    )
+
+
+def musician_out(
+    profile: MusicianProfile, *, customer_price: bool = False
+) -> MusicianProfileResponse:
     choice = profile.user.avatar_choice
+    hourly_rate = Decimal(str(profile.hourly_rate))
+    if customer_price:
+        hourly_rate = (hourly_rate * CLIENT_PRICE_MULTIPLIER).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
     return MusicianProfileResponse(
         id=profile.id, user_id=profile.user_id, contact_name=profile.contact_name,
         city=profile.city, municipality=profile.municipality, state=profile.state,
         group_name=profile.group_name, group_type=profile.group_type,
         musical_style=profile.musical_style, member_count=profile.member_count,
-        hourly_rate=profile.hourly_rate, includes_sound=profile.includes_sound,
+        hourly_rate=float(hourly_rate), includes_sound=profile.includes_sound,
         subwoofer_count=profile.subwoofer_count, mid_speaker_count=profile.mid_speaker_count,
         equipment_brands=values(profile.equipment_brands), audience_capacity=profile.audience_capacity,
         description=profile.description, media=profile.media,
@@ -281,8 +369,15 @@ def booking_out(
         subtotal_cents=booking.subtotal_cents,
         service_fee_cents=booking.service_fee_cents,
         total_cents=booking.total_cents,
+        musician_earnings_cents=booking.musician_earnings_cents,
+        platform_fee_cents=booking.platform_fee_cents,
+        stripe_fee_estimate_cents=booking.stripe_fee_estimate_cents,
         currency=booking.currency,
         payment_status=booking.payment_status,
+        payout_status=booking.payout_status,
+        dispute_reason=(booking.dispute_reason if include_private_recommendation else None),
+        stripe_transfer_id=booking.stripe_transfer_id,
+        payout_error=(booking.payout_error if include_private_recommendation else None),
         created_at=booking.created_at,
         chat_active=chat_active,
         chat_status=chat_status,
@@ -576,6 +671,19 @@ def admin_groups(
         "account_email": None if profile.user.phone else profile.user.email,
         "account_phone": profile.user.phone,
         "admin_phone": profile.admin_phone,
+        "deposit_account_type": (
+            profile.payout_destination.destination_type
+            if profile.payout_destination else None
+        ),
+        "deposit_account": (
+            payout_cipher().decrypt(
+                profile.payout_destination.encrypted_number.encode("ascii")
+            ).decode("ascii") if profile.payout_destination else None
+        ),
+        "stripe_connected_account_id": (
+            profile.payout_destination.stripe_connected_account_id
+            if profile.payout_destination else None
+        ),
         "is_active": profile.user.is_active,
         "rules_acceptances": [{
             "rules_type": acceptance.rules_type,
@@ -606,6 +714,9 @@ def admin_bookings(
 @app.put("/api/users/me/avatar-preset")
 def set_avatar_preset(data: AvatarChoiceUpdate, user: User = Depends(current_user), db: Session = Depends(get_db)):
     allowed = {
+        "musician_tuba_burgundy", "musician_trumpet_black", "musician_accordion_black",
+        "musician_singer_black", "musician_guitar_eden", "musician_guitar_chalino",
+        "musician_accordion_red",
         "jaguar_guitar", "jaguar_accordion", "jaguar_dj", "coyote_singer", "coyote_guitar", "coyote_drums",
         "owl_violin", "owl_keyboard", "owl_sax", "fox_bass", "fox_mariachi", "fox_singer", "bear_tuba",
         "bear_drums", "bear_accordion", "eagle_trumpet", "eagle_guitar", "eagle_dj", "rabbit_violin",
@@ -706,6 +817,104 @@ def get_musician(user: User = Depends(require_role(UserRole.musician)), db: Sess
     profile = db.scalar(musician_profiles().where(MusicianProfile.user_id == user.id))
     if not profile: raise HTTPException(404, "Completa tu perfil")
     return musician_out(profile)
+
+
+@app.get(
+    "/api/musicians/me/payout-destination",
+    response_model=PayoutDestinationResponse,
+    response_model_exclude_none=True,
+)
+def get_payout_destination(
+    user: User = Depends(require_role(UserRole.musician)),
+    db: Session = Depends(get_db),
+):
+    profile = db.scalar(musician_profiles().where(
+        MusicianProfile.user_id == user.id
+    ))
+    if not profile:
+        raise HTTPException(409, "Crea primero el perfil de la agrupación")
+    return payout_out(profile, db)
+
+
+@app.put(
+    "/api/musicians/me/payout-destination",
+    response_model=PayoutDestinationResponse,
+)
+def set_payout_destination(
+    data: PayoutDestinationUpsert,
+    user: User = Depends(require_role(UserRole.musician)),
+    db: Session = Depends(get_db),
+):
+    profile = db.scalar(musician_profiles().where(
+        MusicianProfile.user_id == user.id
+    ))
+    if not profile:
+        raise HTTPException(409, "Crea primero el perfil de la agrupación")
+    if not payout_eligible(profile, db):
+        raise HTTPException(
+            403,
+            "La cuenta de depósito se habilita al confirmar tu primer contrato pagado",
+        )
+    number = re.sub(r"\D", "", data.account_number)
+    if data.destination_type == "clabe" and not valid_clabe(number):
+        raise HTTPException(422, "La CLABE debe contener 18 dígitos válidos")
+    if data.destination_type == "debit_card" and not valid_card_number(number):
+        raise HTTPException(422, "La tarjeta de débito debe contener 16 dígitos válidos")
+    encrypted = payout_cipher().encrypt(number.encode("ascii")).decode("ascii")
+    destination = profile.payout_destination
+    if destination:
+        destination.destination_type = data.destination_type
+        destination.encrypted_number = encrypted
+        destination.last4 = number[-4:]
+        destination.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    else:
+        destination = MusicianPayoutDestination(
+            musician_id=profile.id,
+            destination_type=data.destination_type,
+            encrypted_number=encrypted,
+            last4=number[-4:],
+        )
+        db.add(destination)
+    db.commit()
+    profile = db.scalar(musician_profiles().where(
+        MusicianProfile.user_id == user.id
+    ))
+    return payout_out(profile, db)
+
+
+@app.put("/api/admin/musicians/{musician_id}/stripe-connect")
+def link_stripe_connect_account(
+    musician_id: int,
+    data: StripeConnectAccountUpdate,
+    user: User = Depends(require_role(UserRole.admin)),
+    db: Session = Depends(get_db),
+):
+    profile = db.get(MusicianProfile, musician_id)
+    if not profile:
+        raise HTTPException(404, "Agrupación no encontrada")
+    destination = db.scalar(select(MusicianPayoutDestination).where(
+        MusicianPayoutDestination.musician_id == musician_id
+    ))
+    if not destination:
+        raise HTTPException(409, "La agrupación aún no registra cuenta de depósito")
+    destination.stripe_connected_account_id = data.account_id
+    db.commit()
+    pending_ids = list(db.scalars(select(Booking.id).where(
+        Booking.musician_id == musician_id,
+        Booking.payout_status.in_(("pending_connect_account", "transfer_failed")),
+        Booking.review.has(),
+    )).all())
+    for booking_id in pending_ids:
+        pending = db.get(Booking, booking_id)
+        pending.payout_status = "approved_for_payout"
+        pending.payout_error = None
+        db.commit()
+        release_musician_funds(booking_id, db)
+    return {
+        "musician_id": musician_id,
+        "stripe_connect_ready": True,
+        "retried_transfers": len(pending_ids),
+    }
 
 
 @app.get(
@@ -847,7 +1056,9 @@ def search_musicians(q: str = "", group_type: str | None = None, musical_style: 
         term = f"%{q}%"; stmt = stmt.where(or_(MusicianProfile.group_name.ilike(term), MusicianProfile.group_type.ilike(term), MusicianProfile.musical_style.ilike(term)))
     if group_type: stmt = stmt.where(MusicianProfile.group_type.ilike(f"%{group_type}%"))
     if musical_style: stmt = stmt.where(MusicianProfile.musical_style.ilike(f"%{musical_style}%"))
-    if max_hourly_rate is not None: stmt = stmt.where(MusicianProfile.hourly_rate <= max_hourly_rate)
+    if max_hourly_rate is not None:
+        base_limit = Decimal(str(max_hourly_rate)) / CLIENT_PRICE_MULTIPLIER
+        stmt = stmt.where(MusicianProfile.hourly_rate <= base_limit)
     if includes_sound is not None: stmt = stmt.where(MusicianProfile.includes_sound == includes_sound)
     if city or municipality or state:
         stmt = stmt.order_by(case(
@@ -856,14 +1067,15 @@ def search_musicians(q: str = "", group_type: str | None = None, musical_style: 
             (func.lower(MusicianProfile.state) == (state or "").lower(), 2),
             else_=3,
         ))
-    return [musician_out(p) for p in db.scalars(stmt.offset(skip).limit(limit)).all()]
+    return [musician_out(p, customer_price=True)
+            for p in db.scalars(stmt.offset(skip).limit(limit)).all()]
 
 
 @app.get("/api/musicians/{musician_id}", response_model=MusicianProfileResponse, response_model_exclude_none=True)
 def musician_detail(musician_id: int, db: Session = Depends(get_db)):
     profile = db.scalar(musician_profiles().where(MusicianProfile.id == musician_id))
     if not profile: raise HTTPException(404, "Agrupación no encontrada")
-    return musician_out(profile)
+    return musician_out(profile, customer_price=True)
 
 
 @app.get(
@@ -1019,6 +1231,10 @@ def create_booking_review(
     can_review, status = booking_review_state(booking)
     if not can_review:
         raise HTTPException(409 if booking.review else 403, status)
+    if booking.payment_status != "paid":
+        raise HTTPException(409, "El pago debe estar confirmado antes de calificar")
+    if booking.payout_status == "disputed":
+        raise HTTPException(409, "La liberación está detenida por una disputa")
     recommendation = data.recommendation.strip()
     if len(recommendation) < 3:
         raise HTTPException(422, "Deja un consejo o recomendación amable")
@@ -1035,13 +1251,77 @@ def create_booking_review(
         **data.model_dump(exclude={"recommendation"}),
     )
     db.add(review)
+    booking.payout_status = "approved_for_payout"
+    booking.approved_for_payout_at = datetime.now(timezone.utc).replace(tzinfo=None)
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "Ya calificaste este evento")
     db.refresh(review)
+    release_musician_funds(booking.id, db)
     return review
+
+
+@app.post("/api/bookings/{booking_id}/dispute")
+def open_booking_dispute(
+    booking_id: int,
+    data: BookingDisputeCreate,
+    user: User = Depends(require_role(UserRole.client)),
+    db: Session = Depends(get_db),
+):
+    booking = db.scalar(booking_query().where(Booking.id == booking_id))
+    if not booking:
+        raise HTTPException(404, "Contratación no encontrada")
+    if booking.client.user_id != user.id:
+        raise HTTPException(403, "Esta contratación pertenece a otro cliente")
+    if booking.payment_status != "paid":
+        raise HTTPException(409, "El pago aún no está confirmado")
+    if not booking_event_finished(booking):
+        raise HTTPException(403, "Podrás reportar un problema al terminar el evento")
+    if booking.payout_status in {"approved_for_payout", "paid_out"}:
+        raise HTTPException(409, "El pago ya fue autorizado para la agrupación")
+    booking.payout_status = "disputed"
+    booking.dispute_reason = data.reason.strip()
+    booking.dispute_opened_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.commit()
+    return {"booking_id": booking.id, "payout_status": booking.payout_status}
+
+
+@app.put("/api/admin/bookings/{booking_id}/payout")
+def admin_payout_action(
+    booking_id: int,
+    data: AdminPayoutAction,
+    user: User = Depends(require_role(UserRole.admin)),
+    db: Session = Depends(get_db),
+):
+    booking = db.get(Booking, booking_id)
+    if not booking:
+        raise HTTPException(404, "Contratación no encontrada")
+    if data.action in {"approve", "reject_dispute"}:
+        if booking.payment_status != "paid":
+            raise HTTPException(409, "El pago aún no está confirmado")
+        booking.payout_status = "approved_for_payout"
+        booking.approved_for_payout_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        if data.action == "reject_dispute":
+            booking.dispute_reason = None
+    elif data.action == "mark_paid":
+        if booking.payout_status != "approved_for_payout":
+            raise HTTPException(409, "El pago todavía no está autorizado")
+        destination = db.scalar(select(MusicianPayoutDestination).where(
+            MusicianPayoutDestination.musician_id == booking.musician_id
+        ))
+        if not destination:
+            raise HTTPException(
+                409, "La agrupación aún no registra una cuenta de depósito"
+            )
+        booking.payout_status = "paid_out"
+        booking.paid_out_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.commit()
+    if data.action in {"approve", "reject_dispute"}:
+        release_musician_funds(booking.id, db)
+        booking = db.get(Booking, booking.id)
+    return {"booking_id": booking.id, "payout_status": booking.payout_status}
 
 
 @app.get(

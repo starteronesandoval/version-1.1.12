@@ -1,4 +1,5 @@
 import stripe
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -9,7 +10,8 @@ from sqlalchemy.orm import Session
 from .auth import current_user
 from .config import settings
 from .database import get_db
-from .models import BillingCustomer, Booking, StripeWebhookEvent, User
+from .models import (BillingCustomer, Booking, MusicianPayoutDestination,
+                     StripeWebhookEvent, User)
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
@@ -136,7 +138,8 @@ def create_checkout_session(
         client_reference_id=str(booking.id),
         metadata={"balam_user_id": str(user.id), "booking_id": str(booking.id)},
         payment_intent_data={
-            "metadata": {"balam_user_id": str(user.id), "booking_id": str(booking.id)}
+            "metadata": {"balam_user_id": str(user.id), "booking_id": str(booking.id)},
+            "transfer_group": f"balam_booking_{booking.id}",
         },
         invoice_creation={"enabled": True},
         billing_address_collection="required",
@@ -191,11 +194,73 @@ def sync_checkout(event_type: str, obj, db: Session) -> None:
     if event_type in {"checkout.session.completed", "checkout.session.async_payment_succeeded"}:
         if obj.get("payment_status") in {"paid", "no_payment_required"}:
             booking.payment_status = "paid"
+            if booking.payout_status == "awaiting_payment":
+                booking.payout_status = "musician_funds_held"
             booking.stripe_payment_intent_id = obj.get("payment_intent")
     elif event_type == "checkout.session.async_payment_failed":
         booking.payment_status = "failed"
     elif event_type == "checkout.session.expired" and booking.payment_status != "paid":
         booking.payment_status = "expired"
+
+
+def release_musician_funds(booking_id: int, db: Session) -> bool:
+    """Transfer an approved booking exactly once to its connected account."""
+    booking = db.get(Booking, booking_id)
+    if not booking or booking.payout_status != "approved_for_payout":
+        return False
+    if booking.stripe_transfer_id:
+        booking.payout_status = "transferred"
+        db.commit()
+        return True
+    destination = db.scalar(select(MusicianPayoutDestination).where(
+        MusicianPayoutDestination.musician_id == booking.musician_id
+    ))
+    if not destination or not destination.stripe_connected_account_id:
+        booking.payout_status = "pending_connect_account"
+        booking.payout_error = "Falta vincular la cuenta Stripe Connect"
+        db.commit()
+        return False
+    if not booking.stripe_payment_intent_id:
+        booking.payout_status = "transfer_failed"
+        booking.payout_error = "El cobro no tiene PaymentIntent de Stripe"
+        db.commit()
+        return False
+    stripe_client_ready()
+    try:
+        payment_intent = stripe.PaymentIntent.retrieve(
+            booking.stripe_payment_intent_id
+        )
+        latest_charge = getattr(payment_intent, "latest_charge", None)
+        if isinstance(latest_charge, dict):
+            latest_charge = latest_charge.get("id")
+        elif latest_charge and not isinstance(latest_charge, str):
+            latest_charge = getattr(latest_charge, "id", None)
+        if not latest_charge:
+            raise ValueError("Stripe no devolvió el cargo asociado")
+        transfer = stripe.Transfer.create(
+            amount=booking.musician_earnings_cents,
+            currency=booking.currency,
+            destination=destination.stripe_connected_account_id,
+            source_transaction=latest_charge,
+            transfer_group=f"balam_booking_{booking.id}",
+            description=f"Balam contrato #{booking.id}",
+            metadata={"booking_id": str(booking.id),
+                      "musician_id": str(booking.musician_id)},
+            idempotency_key=f"balam-booking-{booking.id}-musician-v1",
+        )
+        booking.stripe_transfer_id = transfer.id
+        booking.payout_status = "transferred"
+        booking.paid_out_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        booking.payout_error = None
+        db.commit()
+        return True
+    except (stripe.error.StripeError, ValueError) as error:
+        db.rollback()
+        booking = db.get(Booking, booking_id)
+        booking.payout_status = "transfer_failed"
+        booking.payout_error = str(error)[:1000]
+        db.commit()
+        return False
 
 
 @router.post("/webhooks/stripe", include_in_schema=False)

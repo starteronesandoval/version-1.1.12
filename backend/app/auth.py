@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from google.auth.exceptions import GoogleAuthError
+from google.auth.exceptions import GoogleAuthError, TransportError
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 from jwt import InvalidTokenError
@@ -42,6 +42,11 @@ def verify_google_token(token: str) -> dict:
         try:
             claims = google_id_token.verify_oauth2_token(
                 token, google_requests.Request(), audience=audience
+            )
+        except TransportError:
+            raise HTTPException(
+                status_code=503,
+                detail="No fue posible consultar a Google. Inténtalo nuevamente.",
             )
         except (ValueError, GoogleAuthError):
             continue

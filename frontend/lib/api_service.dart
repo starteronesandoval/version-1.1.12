@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 
 class ApiException implements Exception {
   ApiException(this.message, this.statusCode);
@@ -208,7 +209,12 @@ class ApiService {
         .timeout(requestTimeout),
   );
 
-  Future<void> uploadMedia(File file, String type, int position) async {
+  Future<void> uploadMedia(
+    File file,
+    String type,
+    int position, {
+    String? mimeType,
+  }) async {
     final request = http.MultipartRequest(
       'POST',
       Uri.parse(
@@ -217,26 +223,58 @@ class ApiService {
     );
     final value = await token;
     request.headers['Authorization'] = 'Bearer $value';
-    request.files.add(await http.MultipartFile.fromPath('file', file.path));
+    final normalizedMimeType = mimeType ?? _mediaMimeTypeFromPath(file.path);
+    request.files.add(
+      await http.MultipartFile.fromPath(
+        'file',
+        file.path,
+        contentType:
+            normalizedMimeType == null
+                ? null
+                : MediaType.parse(normalizedMimeType),
+      ),
+    );
     final response = await http.Response.fromStream(
       await request.send().timeout(requestTimeout),
     );
     _decode(response);
   }
 
-  Future<void> uploadClientAvatar(File file) async {
+  Future<void> uploadClientAvatar(File file, {String? mimeType}) async {
     final request = http.MultipartRequest(
       'POST',
       Uri.parse('$baseUrl/api/clients/me/avatar'),
     );
     final value = await token;
     request.headers['Authorization'] = 'Bearer $value';
-    request.files.add(await http.MultipartFile.fromPath('file', file.path));
+    final normalizedMimeType = mimeType ?? _mediaMimeTypeFromPath(file.path);
+    request.files.add(
+      await http.MultipartFile.fromPath(
+        'file',
+        file.path,
+        contentType:
+            normalizedMimeType == null
+                ? null
+                : MediaType.parse(normalizedMimeType),
+      ),
+    );
     _decode(
       await http.Response.fromStream(
         await request.send().timeout(requestTimeout),
       ),
     );
+  }
+
+  static String? _mediaMimeTypeFromPath(String path) {
+    final normalized = path.toLowerCase();
+    if (normalized.endsWith('.jpg') || normalized.endsWith('.jpeg')) {
+      return 'image/jpeg';
+    }
+    if (normalized.endsWith('.png')) return 'image/png';
+    if (normalized.endsWith('.webp')) return 'image/webp';
+    if (normalized.endsWith('.mp4')) return 'video/mp4';
+    if (normalized.endsWith('.webm')) return 'video/webm';
+    return null;
   }
 
   Future<void> setAvatarPreset(String preset, String color) async {

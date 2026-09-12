@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -24,11 +24,17 @@ class Settings(BaseSettings):
         "http://localhost:3000", "http://localhost:8080"
     ]
     allowed_hosts: Annotated[list[str], NoDecode] = [
-        "localhost", "127.0.0.1", "testserver"
+        "localhost", "127.0.0.1", "10.0.2.2", "testserver"
     ]
-    database_pool_size: int = 10
-    database_max_overflow: int = 20
-    database_pool_timeout: int = 30
+    database_pool_size: int = Field(default=10, ge=1, le=100)
+    database_max_overflow: int = Field(default=20, ge=0, le=200)
+    database_pool_timeout: int = Field(default=30, ge=1, le=300)
+    database_pool_recycle: int = Field(default=1800, ge=60, le=86400)
+    database_connect_timeout: int = Field(default=10, ge=1, le=60)
+    database_ssl_mode: Literal[
+        "disable", "allow", "prefer", "require", "verify-ca", "verify-full"
+    ] = "prefer"
+    database_ssl_root_cert: Path | None = None
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_username: str | None = None
@@ -59,6 +65,11 @@ class Settings(BaseSettings):
         if self.app_env in {"staging", "production"}:
             if not self.database_url.startswith(("postgresql://", "postgresql+psycopg://")):
                 raise ValueError("DATABASE_URL debe usar PostgreSQL fuera de desarrollo")
+            if self.database_ssl_mode in {"verify-ca", "verify-full"}:
+                if not self.database_ssl_root_cert:
+                    raise ValueError(
+                        "DATABASE_SSL_ROOT_CERT es obligatorio con verificación SSL"
+                    )
             if len(self.secret_key) < 32 or "development" in self.secret_key.lower():
                 raise ValueError("SECRET_KEY debe ser aleatoria y tener al menos 32 caracteres")
             if not self.cors_origins or "*" in self.cors_origins:

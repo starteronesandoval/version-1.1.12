@@ -65,6 +65,7 @@ def test_full_registration_and_search_flow():
     assert agenda.json() == [{"date": "2099-10-18", "busy": True}]
     found = client.get("/api/musicians?q=Valle")
     assert found.status_code == 200 and found.json()[0]["group_name"] == "Los del Valle"
+    assert found.json()[0]["hourly_rate"] == 3748.5
     assert found.json()[0]["avatar_color"] == "#20C9B5"
     assert "busy_dates" not in found.json()[0]
     customer = client.post("/api/auth/register", json={"email":"cliente@example.com","password":"segura123","role":"client"})
@@ -174,6 +175,8 @@ def test_full_registration_and_search_flow():
     with SessionLocal() as db:
         stored_booking = db.get(Booking, booking_id)
         stored_booking.event_date = date.today() - timedelta(days=1)
+        stored_booking.payment_status = "paid"
+        stored_booking.payout_status = "musician_funds_held"
         db.commit()
     review = client.post(
         f"/api/bookings/{booking_id}/review", headers=ch,
@@ -185,6 +188,8 @@ def test_full_registration_and_search_flow():
     )
     assert review.status_code == 201
     assert review.json()["overall_score"] == 4.77
+    with SessionLocal() as db:
+        assert db.get(Booking, booking_id).payout_status == "pending_connect_account"
     assert client.post(
         f"/api/bookings/{booking_id}/review", headers=ch,
         json={

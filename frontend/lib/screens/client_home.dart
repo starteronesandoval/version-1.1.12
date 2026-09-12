@@ -378,7 +378,7 @@ class _ClientHomeState extends State<ClientHome> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '${band['group_type']} · ${band['musical_style']}',
+                  'Corriente musical: ${band['musical_style']}',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: Colors.white.withValues(alpha: .67)),
@@ -461,7 +461,10 @@ class _ClientHomeState extends State<ClientHome> {
             .where((item) => item['media_type'] == 'profile_photo')
             .firstOrNull;
     final photos =
-        media.where((item) => item['media_type'] == 'photo').toList();
+        media.where((item) => item['media_type'] == 'photo').toList()..sort(
+          (first, second) =>
+              (first['position'] as num).compareTo(second['position'] as num),
+        );
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -494,7 +497,7 @@ class _ClientHomeState extends State<ClientHome> {
                           ?.copyWith(fontWeight: FontWeight.w800),
                     ),
                     Text(
-                      '${band['group_type']} · ${band['musical_style']}',
+                      'Corriente musical: ${band['musical_style']}',
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: Color(0xFFBFA1FF)),
                     ),
@@ -523,11 +526,25 @@ class _ClientHomeState extends State<ClientHome> {
                     ),
                     const SizedBox(height: 18),
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
-                        _miniStat('${band['member_count']}', 'Integrantes'),
-                        _miniStat('${band['audience_capacity']}', 'Personas'),
-                        _miniStat('\$${band['hourly_rate']}', 'Por hora'),
+                        Expanded(
+                          child: _miniStat(
+                            '${band['member_count']}',
+                            'Integrantes',
+                          ),
+                        ),
+                        Expanded(
+                          child: _miniStat(
+                            '${band['audience_capacity']} personas',
+                            'Sonido aproximado para',
+                          ),
+                        ),
+                        Expanded(
+                          child: _miniStat(
+                            '\$${band['hourly_rate']}',
+                            'Por hora',
+                          ),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 20),
@@ -555,24 +572,20 @@ class _ClientHomeState extends State<ClientHome> {
                         ),
                       ),
                       const SizedBox(height: 10),
-                      SizedBox(
-                        height: 150,
-                        child: ListView.separated(
-                          scrollDirection: Axis.horizontal,
-                          itemCount: photos.length,
-                          separatorBuilder:
-                              (_, __) => const SizedBox(width: 10),
-                          itemBuilder:
-                              (_, i) => ClipRRect(
-                                borderRadius: BorderRadius.circular(18),
-                                child: Image.network(
-                                  widget.api.mediaUrl(photos[i]['url'])!,
-                                  width: 190,
-                                  fit: BoxFit.cover,
-                                ),
-                              ),
+                      for (final photo in photos) ...[
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(18),
+                          child: ColoredBox(
+                            color: Colors.black26,
+                            child: Image.network(
+                              widget.api.mediaUrl(photo['url'])!,
+                              width: double.infinity,
+                              fit: BoxFit.fitWidth,
+                            ),
+                          ),
                         ),
-                      ),
+                        const SizedBox(height: 14),
+                      ],
                     ],
                     const SizedBox(height: 24),
                     FilledButton.icon(
@@ -643,12 +656,7 @@ class _ClientHomeState extends State<ClientHome> {
                   durationMinutes != null && durationMinutes > 0
                       ? (hourlyRateCents * durationMinutes / 60).round()
                       : null;
-              final serviceFeeCents =
-                  subtotalCents == null ? null : (subtotalCents * .066).round();
-              final totalCents =
-                  subtotalCents == null
-                      ? null
-                      : subtotalCents + serviceFeeCents!;
+              final totalCents = subtotalCents;
               return SafeArea(
                 child: Padding(
                   padding: EdgeInsets.fromLTRB(
@@ -915,16 +923,12 @@ class _ClientHomeState extends State<ClientHome> {
                               child: Column(
                                 children: [
                                   _priceLine(
-                                    'Tarifa por hora',
+                                    'Precio final por hora',
                                     hourlyRateCents / 100,
                                   ),
                                   _priceLine(
-                                    'Subtotal (${(durationMinutes! / 60).toStringAsFixed(durationMinutes % 60 == 0 ? 0 : 2)} horas)',
+                                    '${(durationMinutes! / 60).toStringAsFixed(durationMinutes % 60 == 0 ? 0 : 2)} horas',
                                     subtotalCents! / 100,
-                                  ),
-                                  _priceLine(
-                                    'Cargo de servicio (6.6%)',
-                                    serviceFeeCents! / 100,
                                   ),
                                   const Divider(),
                                   _priceLine(
@@ -1168,6 +1172,63 @@ class _ClientHomeState extends State<ClientHome> {
     }
   }
 
+  Future<void> _reportBookingProblem(
+    BuildContext dialogContext,
+    Map<String, dynamic> booking,
+  ) async {
+    final reason = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: dialogContext,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Reportar un problema'),
+            content: TextField(
+              controller: reason,
+              minLines: 3,
+              maxLines: 6,
+              decoration: const InputDecoration(
+                labelText: 'Describe lo ocurrido',
+                hintText: 'La liberación al músico quedará detenida.',
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Detener liberación'),
+              ),
+            ],
+          ),
+    );
+    if (confirmed != true) {
+      reason.dispose();
+      return;
+    }
+    try {
+      await widget.api.post('/api/bookings/${booking['id']}/dispute', {
+        'reason': reason.text.trim(),
+      });
+      booking['payout_status'] = 'disputed';
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Liberación detenida para revisión.')),
+        );
+      }
+    } on ApiException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } finally {
+      reason.dispose();
+    }
+  }
+
   Future<void> _contractsSheet(BuildContext context) async {
     await loadClientBookings();
     if (!context.mounted) return;
@@ -1304,6 +1365,23 @@ class _ClientHomeState extends State<ClientHome> {
                                   ),
                                 ),
                                 const SizedBox(height: 8),
+                                if (item['event_finished'] == true &&
+                                    item['payment_status'] == 'paid' &&
+                                    item['payout_status'] ==
+                                        'musician_funds_held') ...[
+                                  OutlinedButton.icon(
+                                    onPressed:
+                                        () => _reportBookingProblem(
+                                          sheetContext,
+                                          item,
+                                        ),
+                                    icon: const Icon(
+                                      Icons.report_problem_outlined,
+                                    ),
+                                    label: const Text('Reportar un problema'),
+                                  ),
+                                  const SizedBox(height: 8),
+                                ],
                                 if (item['can_review'] == true)
                                   FilledButton.icon(
                                     onPressed: () async {
@@ -1328,6 +1406,8 @@ class _ClientHomeState extends State<ClientHome> {
                                             result['overall_score'];
                                         item['review_status'] =
                                             'Ya calificaste este evento.';
+                                        item['payout_status'] =
+                                            'approved_for_payout';
                                         if (mounted) setState(() {});
                                       }
                                     },
@@ -1473,6 +1553,23 @@ class _ClientHomeState extends State<ClientHome> {
                                   ),
                                 ),
                                 const SizedBox(height: 14),
+                                if (item['event_finished'] == true &&
+                                    item['payment_status'] == 'paid' &&
+                                    item['payout_status'] ==
+                                        'musician_funds_held') ...[
+                                  OutlinedButton.icon(
+                                    onPressed:
+                                        () => _reportBookingProblem(
+                                          sheetContext,
+                                          item,
+                                        ),
+                                    icon: const Icon(
+                                      Icons.report_problem_outlined,
+                                    ),
+                                    label: const Text('Reportar un problema'),
+                                  ),
+                                  const SizedBox(height: 8),
+                                ],
                                 if (item['can_review'] == true)
                                   FilledButton.icon(
                                     style: FilledButton.styleFrom(
@@ -1498,6 +1595,8 @@ class _ClientHomeState extends State<ClientHome> {
                                         item['can_review'] = false;
                                         item['review_score'] =
                                             result['overall_score'];
+                                        item['payout_status'] =
+                                            'approved_for_payout';
                                         await loadClientBookings();
                                         if (sheetContext.mounted) {
                                           Navigator.pop(sheetContext);
@@ -1548,10 +1647,12 @@ class _ClientHomeState extends State<ClientHome> {
     children: [
       Text(
         value,
+        textAlign: TextAlign.center,
         style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
       ),
       Text(
         label,
+        textAlign: TextAlign.center,
         style: TextStyle(
           fontSize: 12,
           color: Colors.white.withValues(alpha: .55),
@@ -1572,13 +1673,31 @@ class _ClientHomeState extends State<ClientHome> {
   }
 
   Future<void> _pickClientAvatar() async {
-    final image = await picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 88,
-    );
-    if (image == null) return;
-    await widget.api.uploadClientAvatar(File(image.path));
-    await loadClientProfile();
+    try {
+      final image = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 88,
+      );
+      if (image == null) return;
+      await widget.api.uploadClientAvatar(
+        File(image.path),
+        mimeType: image.mimeType,
+      );
+      await loadClientProfile();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Foto de perfil actualizada.')),
+        );
+      }
+    } on ApiException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } catch (_) {
+      _showConnectionError();
+    }
   }
 
   Future<void> _profileSheet(BuildContext context) async {

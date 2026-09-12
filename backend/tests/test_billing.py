@@ -3,10 +3,12 @@ import hmac
 import json
 import os
 import time as clock
-from datetime import date, time
+from datetime import date, time, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+
+from sqlalchemy import select
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///./test_billing.db")
 os.environ.setdefault("UPLOAD_DIR", "test_uploads")
@@ -20,8 +22,10 @@ from fastapi.testclient import TestClient
 from app.auth import create_token
 from app.config import settings
 from app.database import Base, SessionLocal, engine
+from app.billing import release_musician_funds
 from app.main import app, booking_price_snapshot
-from app.models import Booking, ClientProfile, MusicianProfile, User, UserRole
+from app.models import (Booking, ClientProfile, MusicianPayoutDestination,
+                        MusicianProfile, User, UserRole)
 
 client = TestClient(app)
 
@@ -37,10 +41,10 @@ def teardown_module():
     Path("test_billing.db").unlink(missing_ok=True)
 
 
-def create_booking_fixture() -> tuple[dict[str, str], int]:
+def create_booking_fixture(suffix: str = "") -> tuple[dict[str, str], int]:
     with SessionLocal() as db:
-        client_user = User(email="billing@example.com", password_hash="unused", role=UserRole.client)
-        musician_user = User(email="group@example.com", password_hash="unused", role=UserRole.musician)
+        client_user = User(email=f"billing{suffix}@example.com", password_hash="unused", role=UserRole.client)
+        musician_user = User(email=f"group{suffix}@example.com", password_hash="unused", role=UserRole.musician)
         db.add_all([client_user, musician_user])
         db.flush()
         client_profile = ClientProfile(
@@ -66,17 +70,37 @@ def create_booking_fixture() -> tuple[dict[str, str], int]:
         return {"Authorization": f"Bearer {create_token(client_user)}"}, booking.id
 
 
-def test_price_snapshot_multiplies_hours_then_adds_6_6_percent():
+def test_price_snapshot_multiplies_hours_then_adds_7_1_percent():
     price = booking_price_snapshot(1000, time(18, 0), time(21, 0))
     assert price == {
         "hourly_rate_cents": 100000,
         "duration_minutes": 180,
         "subtotal_cents": 300000,
-        "service_fee_cents": 19800,
-        "total_cents": 319800,
+        "service_fee_cents": 21300,
+        "total_cents": 321300,
+        "musician_earnings_cents": 291000,
+        "platform_fee_cents": 18000,
+        "stripe_fee_estimate_cents": 12300,
         "currency": "mxn",
         "payment_status": "pending",
+        "payout_status": "awaiting_payment",
     }
+
+
+def test_ten_thousand_peso_distribution_snapshot():
+    price = booking_price_snapshot(10000, time(18, 0), time(19, 0))
+
+    assert price["subtotal_cents"] == 1_000_000
+    assert price["total_cents"] == 1_071_000
+    assert price["platform_fee_cents"] == 60_000
+    assert price["stripe_fee_estimate_cents"] == 41_000
+    assert price["musician_earnings_cents"] == 970_000
+    assert (
+        price["platform_fee_cents"]
+        + price["stripe_fee_estimate_cents"]
+        + price["musician_earnings_cents"]
+        == price["total_cents"]
+    )
 
 
 def test_checkout_charges_frozen_booking_total():
@@ -95,7 +119,7 @@ def test_checkout_charges_frozen_booking_total():
             )
         assert response.status_code == 201
         kwargs = checkout_create.call_args.kwargs
-        assert kwargs["line_items"][0]["price_data"]["unit_amount"] == 319800
+        assert kwargs["line_items"][0]["price_data"]["unit_amount"] == 321300
         assert kwargs["mode"] == "payment"
         assert kwargs["invoice_creation"] == {"enabled": True}
         with SessionLocal() as db:
@@ -130,3 +154,243 @@ def test_signed_webhook_accepts_stripe_object_payload():
         assert response.json() == {"received": True}
     finally:
         settings.stripe_webhook_secret = original_secret
+
+
+def test_approved_release_creates_idempotent_connect_transfer():
+    _, booking_id = create_booking_fixture("-release")
+    with SessionLocal() as db:
+        booking = db.get(Booking, booking_id)
+        booking.payment_status = "paid"
+        booking.payout_status = "approved_for_payout"
+        booking.stripe_payment_intent_id = "pi_release_test"
+        db.add(MusicianPayoutDestination(
+            musician_id=booking.musician_id,
+            destination_type="clabe",
+            encrypted_number="encrypted-test-value",
+            last4="9719",
+            stripe_connected_account_id="acct_release_test",
+        ))
+        db.commit()
+        original_key = settings.stripe_secret_key
+        settings.stripe_secret_key = "sk_test_placeholder"
+        try:
+            with patch("app.billing.stripe.PaymentIntent.retrieve") as retrieve, \
+                    patch("app.billing.stripe.Transfer.create") as transfer:
+                retrieve.return_value = SimpleNamespace(latest_charge="ch_release_test")
+                transfer.return_value = SimpleNamespace(id="tr_release_test")
+                assert release_musician_funds(booking_id, db) is True
+                kwargs = transfer.call_args.kwargs
+                assert kwargs["amount"] == booking.musician_earnings_cents
+                assert kwargs["destination"] == "acct_release_test"
+                assert kwargs["source_transaction"] == "ch_release_test"
+                assert kwargs["idempotency_key"] == (
+                    f"balam-booking-{booking_id}-musician-v1"
+                )
+            saved = db.get(Booking, booking_id)
+            assert saved.payout_status == "transferred"
+            assert saved.stripe_transfer_id == "tr_release_test"
+        finally:
+            settings.stripe_secret_key = original_key
+
+
+def test_money_flow_from_stripe_webhook_to_group_connect_account():
+    client_headers, booking_id = create_booking_fixture("-money-flow")
+    with SessionLocal() as db:
+        booking = db.get(Booking, booking_id)
+        booking.event_date = date.today() - timedelta(days=1)
+        musician = db.get(MusicianProfile, booking.musician_id)
+        musician_user = db.get(User, musician.user_id)
+        admin_user = User(
+            email="money-flow-admin@example.com",
+            password_hash="unused",
+            role=UserRole.admin,
+        )
+        db.add(admin_user)
+        db.commit()
+        musician_headers = {
+            "Authorization": f"Bearer {create_token(musician_user)}"
+        }
+        admin_headers = {
+            "Authorization": f"Bearer {create_token(admin_user)}"
+        }
+        musician_id = musician.id
+        expected_earnings = booking.musician_earnings_cents
+
+    original_webhook_secret = settings.stripe_webhook_secret
+    original_stripe_key = settings.stripe_secret_key
+    settings.stripe_webhook_secret = "whsec_money_flow"
+    settings.stripe_secret_key = "sk_test_money_flow"
+    try:
+        paid_event = {
+            "id": "evt_money_flow_paid",
+            "type": "checkout.session.completed",
+            "data": {"object": {
+                "metadata": {"booking_id": str(booking_id)},
+                "payment_status": "paid",
+                "payment_intent": "pi_money_flow",
+            }},
+        }
+        with patch(
+            "app.billing.stripe.Webhook.construct_event",
+            return_value=paid_event,
+        ):
+            webhook = client.post(
+                "/api/billing/webhooks/stripe",
+                content=b"signed-stripe-payload",
+                headers={"stripe-signature": "test-signature"},
+            )
+        assert webhook.status_code == 200
+        with SessionLocal() as db:
+            paid_booking = db.get(Booking, booking_id)
+            assert paid_booking.payment_status == "paid"
+            assert paid_booking.payout_status == "musician_funds_held"
+            assert paid_booking.stripe_payment_intent_id == "pi_money_flow"
+
+        destination = client.put(
+            "/api/musicians/me/payout-destination",
+            headers=musician_headers,
+            json={
+                "destination_type": "clabe",
+                "account_number": "032180000118359719",
+            },
+        )
+        assert destination.status_code == 200
+        assert destination.json()["last4"] == "9719"
+
+        connected = client.put(
+            f"/api/admin/musicians/{musician_id}/stripe-connect",
+            headers=admin_headers,
+            json={"account_id": "acct_moneyflowgroup"},
+        )
+        assert connected.status_code == 200
+        assert connected.json()["stripe_connect_ready"] is True
+
+        with patch(
+            "app.billing.stripe.PaymentIntent.retrieve",
+            return_value=SimpleNamespace(latest_charge="ch_money_flow"),
+        ) as retrieve, patch(
+            "app.billing.stripe.Transfer.create",
+            return_value=SimpleNamespace(id="tr_money_flow"),
+        ) as transfer:
+            review = client.post(
+                f"/api/bookings/{booking_id}/review",
+                headers=client_headers,
+                json={
+                    "agreed_duration": 5,
+                    "punctuality": 5,
+                    "uniform": 5,
+                    "atmosphere": 5,
+                    "kindness": 5,
+                    "song_requests": 5,
+                    "would_hire_again": 5,
+                    "recommendation": "Servicio completo y pago autorizado.",
+                },
+            )
+        assert review.status_code == 201
+        retrieve.assert_called_once_with("pi_money_flow")
+        transfer.assert_called_once()
+        transfer_args = transfer.call_args.kwargs
+        assert transfer_args["amount"] == expected_earnings
+        assert transfer_args["currency"] == "mxn"
+        assert transfer_args["destination"] == "acct_moneyflowgroup"
+        assert transfer_args["source_transaction"] == "ch_money_flow"
+        assert transfer_args["transfer_group"] == f"balam_booking_{booking_id}"
+        assert transfer_args["idempotency_key"] == (
+            f"balam-booking-{booking_id}-musician-v1"
+        )
+
+        with SessionLocal() as db:
+            transferred = db.get(Booking, booking_id)
+            assert transferred.payout_status == "transferred"
+            assert transferred.stripe_transfer_id == "tr_money_flow"
+            assert transferred.paid_out_at is not None
+            assert transferred.payout_error is None
+    finally:
+        settings.stripe_webhook_secret = original_webhook_secret
+        settings.stripe_secret_key = original_stripe_key
+
+
+def test_payout_destination_unlocks_only_after_first_paid_contract():
+    with SessionLocal() as db:
+        client_user = User(
+            email="payout-client@example.com", password_hash="unused",
+            role=UserRole.client,
+        )
+        musician_user = User(
+            email="payout-group@example.com", password_hash="unused",
+            role=UserRole.musician,
+        )
+        db.add_all([client_user, musician_user])
+        db.flush()
+        client_profile = ClientProfile(
+            user_id=client_user.id, name="Cliente pago",
+            admin_phone="8111111111", city="Monterrey",
+            municipality="Monterrey", state="Nuevo León",
+        )
+        musician = MusicianProfile(
+            user_id=musician_user.id, contact_name="Grupo pago",
+            group_name="Grupo destino", group_type="Banda",
+            musical_style="Regional", member_count=5, hourly_rate=1000,
+            equipment_brands="[]", description="Grupo de prueba",
+        )
+        db.add_all([client_profile, musician])
+        db.flush()
+        booking = Booking(
+            musician_id=musician.id, client_id=client_profile.id,
+            event_date=date(2099, 2, 1), venue="Salón",
+            start_time=time(18, 0), end_time=time(21, 0),
+            **booking_price_snapshot(1000, time(18, 0), time(21, 0)),
+        )
+        db.add(booking)
+        db.commit()
+        musician_headers = {
+            "Authorization": f"Bearer {create_token(musician_user)}"
+        }
+        payout_client_headers = {
+            "Authorization": f"Bearer {create_token(client_user)}"
+        }
+        booking_id = booking.id
+        musician_id = musician.id
+
+    locked = client.get(
+        "/api/musicians/me/payout-destination", headers=musician_headers,
+    )
+    assert locked.status_code == 200
+    assert locked.json() == {
+        "eligible": False, "configured": False,
+        "stripe_connect_ready": False,
+    }
+    assert client.put(
+        "/api/musicians/me/payout-destination", headers=musician_headers,
+        json={"destination_type": "clabe",
+              "account_number": "032180000118359719"},
+    ).status_code == 403
+
+    with SessionLocal() as db:
+        db.get(Booking, booking_id).payment_status = "paid"
+        db.commit()
+
+    saved = client.put(
+        "/api/musicians/me/payout-destination", headers=musician_headers,
+        json={"destination_type": "clabe",
+              "account_number": "032180000118359719"},
+    )
+    assert saved.status_code == 200
+    assert saved.json()["eligible"] is True
+    assert saved.json()["configured"] is True
+    assert saved.json()["last4"] == "9719"
+    assert "account_number" not in saved.json()
+    with SessionLocal() as db:
+        destination = db.scalar(select(MusicianPayoutDestination).where(
+            MusicianPayoutDestination.musician_id == musician_id
+        ))
+        assert destination.encrypted_number != "032180000118359719"
+        db.get(Booking, booking_id).event_date = date.today() - timedelta(days=1)
+        db.commit()
+    disputed = client.post(
+        f"/api/bookings/{booking_id}/dispute",
+        headers=payout_client_headers,
+        json={"reason": "La agrupación no terminó el tiempo contratado."},
+    )
+    assert disputed.status_code == 200
+    assert disputed.json()["payout_status"] == "disputed"

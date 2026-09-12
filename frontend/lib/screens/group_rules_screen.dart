@@ -63,90 +63,106 @@ class _GroupRulesScreenState extends State<GroupRulesScreen> {
 
   @override
   Widget build(BuildContext context) => ListView(
-        padding: const EdgeInsets.fromLTRB(18, 12, 18, 32),
-        children: [
-          GlassCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Center(
-                  child: Icon(Icons.gavel_rounded,
-                      size: 58, color: Color(0xFFFFC857)),
+    padding: const EdgeInsets.fromLTRB(18, 12, 18, 32),
+    children: [
+      GlassCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Center(
+              child: Icon(
+                Icons.gavel_rounded,
+                size: 58,
+                color: Color(0xFFFFC857),
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Reglas para Agrupaciones',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFC857).withValues(alpha: .12),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: const Text(
+                'Antes de continuar: leer y marcar este acuerdo constituye una aceptación contractual dentro de Garibaldy. Estas reglas protegen al cliente, a la agrupación y a Garibaldy en los tratos realizados mediante la aplicación.',
+                style: TextStyle(fontWeight: FontWeight.w700, height: 1.4),
+              ),
+            ),
+            const SizedBox(height: 18),
+            const Text(
+              'Garibaldy busca nuevas oportunidades para agrupaciones que han construido su trabajo con talento, preparación, constancia y profesionalismo. Para proteger a clientes y agrupaciones serias, debes aceptar lo siguiente:',
+              style: TextStyle(height: 1.5),
+            ),
+            for (final section in sections) ...[
+              const SizedBox(height: 18),
+              Text(
+                section.$1,
+                style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
                 ),
-                const SizedBox(height: 14),
-                const Text('Reglas para Agrupaciones',
-                    textAlign: TextAlign.center,
-                    style:
-                        TextStyle(fontSize: 26, fontWeight: FontWeight.w900)),
-                const SizedBox(height: 14),
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFC857).withValues(alpha: .12),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: const Text(
-                    'Antes de continuar: leer y marcar este acuerdo constituye una aceptación contractual dentro de Garibaldy. Estas reglas protegen al cliente, a la agrupación y a Garibaldy en los tratos realizados mediante la aplicación.',
-                    style: TextStyle(fontWeight: FontWeight.w700, height: 1.4),
-                  ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                section.$2,
+                style: TextStyle(
+                  height: 1.5,
+                  color: Colors.white.withValues(alpha: .78),
                 ),
-                const SizedBox(height: 18),
-                const Text(
-                  'Garibaldy busca nuevas oportunidades para agrupaciones que han construido su trabajo con talento, preparación, constancia y profesionalismo. Para proteger a clientes y agrupaciones serias, debes aceptar lo siguiente:',
-                  style: TextStyle(height: 1.5),
-                ),
-                for (final section in sections) ...[
-                  const SizedBox(height: 18),
-                  Text(section.$1,
-                      style: const TextStyle(
-                          fontSize: 17, fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 6),
-                  Text(section.$2,
-                      style: TextStyle(
-                          height: 1.5,
-                          color: Colors.white.withValues(alpha: .78))),
-                ],
-                const SizedBox(height: 20),
-                const Text('Nuestro principio',
-                    style:
-                        TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-                const SizedBox(height: 7),
-                const Text(
-                  'No buscamos impedir sustituciones normales del trabajo musical. Buscamos impedir que alguien venda como propia una agrupación que realmente no tiene. El cliente debe saber qué agrupación contrata y la agrupación profesional debe recibir el valor que su trabajo merece.',
-                  style: TextStyle(height: 1.5),
-                ),
-                const SizedBox(height: 22),
-                CheckboxListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: accepted,
-                  onChanged: busy
+              ),
+            ],
+            const SizedBox(height: 20),
+            const Text(
+              'Nuestro principio',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 7),
+            const Text(
+              'No buscamos impedir sustituciones normales del trabajo musical. Buscamos impedir que alguien venda como propia una agrupación que realmente no tiene. El cliente debe saber qué agrupación contrata y la agrupación profesional debe recibir el valor que su trabajo merece.',
+              style: TextStyle(height: 1.5),
+            ),
+            const SizedBox(height: 22),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              value: accepted,
+              onChanged:
+                  busy
                       ? null
                       : (value) => setState(() => accepted = value ?? false),
-                  controlAffinity: ListTileControlAffinity.leading,
-                  title: const Text(
-                    'He leído y acepto las Reglas para Agrupaciones de Garibaldy. Declaro que la agrupación que estoy registrando existe realmente y que la información y material proporcionados representan razonablemente a la formación que ofreceré a los clientes.',
-                    style: TextStyle(fontWeight: FontWeight.w700, height: 1.4),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                      minimumSize: const Size.fromHeight(54)),
-                  onPressed: accepted && !busy ? submit : null,
-                  icon: const Icon(Icons.verified_user_outlined),
-                  label: Text(
-                      busy ? 'Registrando aceptación…' : 'Aceptar y continuar'),
-                ),
-                const SizedBox(height: 6),
-                TextButton(
-                  style: TextButton.styleFrom(
-                      minimumSize: const Size.fromHeight(48)),
-                  onPressed: busy ? null : widget.onDecline,
-                  child: const Text('No acepto'),
-                ),
-              ],
+              controlAffinity: ListTileControlAffinity.leading,
+              title: const Text(
+                'He leído y acepto las Reglas para Agrupaciones de Garibaldy. Declaro que la agrupación que estoy registrando existe realmente y que la información y material proporcionados representan razonablemente a la formación que ofreceré a los clientes.',
+                style: TextStyle(fontWeight: FontWeight.w700, height: 1.4),
+              ),
             ),
-          ),
-        ],
-      );
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(54),
+              ),
+              onPressed: accepted && !busy ? submit : null,
+              icon: const Icon(Icons.verified_user_outlined),
+              label: Text(
+                busy ? 'Registrando aceptación…' : 'Aceptar y continuar',
+              ),
+            ),
+            const SizedBox(height: 6),
+            TextButton(
+              style: TextButton.styleFrom(
+                minimumSize: const Size.fromHeight(48),
+              ),
+              onPressed: busy ? null : widget.onDecline,
+              child: const Text('No acepto'),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
 }
