@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 RUN addgroup --system balam && adduser --system --ingroup balam balam
 COPY requirements.txt ./
-RUN pip install --require-hashes=false -r requirements.txt
+RUN pip install -r requirements.txt
 COPY alembic.ini ./
 COPY migrations ./migrations
 COPY app ./app

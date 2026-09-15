@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import hmac
 import logging
+import mimetypes
 import re
 import secrets
 import smtplib
@@ -62,6 +63,7 @@ from .schemas import (AdminPayoutAction, AvailabilityResponse, AvatarChoiceUpdat
                       RulesAcceptanceResponse, TokenResponse, UserResponse)
 
 settings.upload_dir.mkdir(parents=True, exist_ok=True)
+mimetypes.add_type("application/vnd.android.package-archive", ".apk")
 
 app = FastAPI(
     title=settings.app_name,
