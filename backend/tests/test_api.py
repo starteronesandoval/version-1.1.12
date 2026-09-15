@@ -12,6 +12,7 @@ os.environ["EXPOSE_PASSWORD_RESET_CODE"] = "true"
 from fastapi.testclient import TestClient
 from app.database import Base, engine
 from app.main import app
+from app.config import settings
 
 client = TestClient(app)
 
@@ -24,6 +25,27 @@ def teardown_module():
     Base.metadata.drop_all(engine)
     engine.dispose()
     Path("test_balam.db").unlink(missing_ok=True)
+
+
+def test_login_rate_limit_is_bound_to_the_account():
+    registered = client.post("/api/auth/register", json={
+        "email": "rate-limit@example.com",
+        "password": "segura123",
+        "role": "client",
+    })
+    assert registered.status_code == 201
+    previous_limit = settings.auth_rate_limit_per_minute
+    settings.auth_rate_limit_per_minute = 2
+    try:
+        payload = {
+            "identifier": "rate-limit@example.com",
+            "password": "incorrecta",
+        }
+        assert client.post("/api/auth/login", json=payload).status_code == 401
+        assert client.post("/api/auth/login", json=payload).status_code == 401
+        assert client.post("/api/auth/login", json=payload).status_code == 429
+    finally:
+        settings.auth_rate_limit_per_minute = previous_limit
 
 
 def test_full_registration_and_search_flow():
@@ -41,6 +63,7 @@ def test_full_registration_and_search_flow():
     profile = client.put("/api/musicians/me", headers=mh, json={
         "contact_name":"Ana López","admin_phone":"8111111111","city":"Monterrey","municipality":"Monterrey","state":"Nuevo León","group_name":"Los del Valle","group_type":"Norteño",
         "musical_style":"Norteño tradicional","member_count":5,"hourly_rate":3500,
+        "minimum_booking_hours":3,
         "includes_sound":True,"subwoofer_count":2,"mid_speaker_count":4,
         "equipment_brands":["JBL","QSC"],"audience_capacity":500,"description":"Música para eventos"
     })
@@ -53,7 +76,9 @@ def test_full_registration_and_search_flow():
     restored = client.get("/api/musicians/me", headers=mh)
     assert restored.status_code == 200
     assert restored.json()["equipment_brands"] == ["JBL", "QSC"]
+    assert restored.json()["minimum_booking_hours"] == 3
     assert restored.json()["avatar_preset"] == "jaguar_accordion"
+    assert restored.json()["avatar_mode"] == "preset"
     busy = client.put(
         "/api/musicians/me/busy-dates/2099-10-18",
         headers=mh,
@@ -87,6 +112,19 @@ def test_full_registration_and_search_flow():
         headers=ch,
     )
     assert available.status_code == 200 and available.json()["available"] is True
+    too_short = client.post(
+        "/api/bookings",
+        headers=ch,
+        json={
+            "musician_id": profile.json()["id"],
+            "event_date": "2099-10-19",
+            "venue": "Salón Balam, Monterrey",
+            "start_time": "18:30",
+            "end_time": "20:30",
+        },
+    )
+    assert too_short.status_code == 422
+    assert "a partir de 3 horas" in too_short.json()["detail"]
     booking = client.post(
         "/api/bookings",
         headers=ch,
@@ -220,7 +258,12 @@ def test_full_registration_and_search_flow():
     assert review.status_code == 201
     assert review.json()["overall_score"] == 4.77
     with SessionLocal() as db:
-        assert db.get(Booking, booking_id).payout_status == "pending_connect_account"
+        assert db.get(Booking, booking_id).payout_status == "musician_funds_held"
+    released = client.post(
+        f"/api/bookings/{booking_id}/release", headers=ch, json={}
+    )
+    assert released.status_code == 200
+    assert released.json()["payout_status"] == "pending_connect_account"
     assert client.post(
         f"/api/bookings/{booking_id}/review", headers=ch,
         json={
@@ -262,9 +305,21 @@ def test_full_registration_and_search_flow():
     )
     assert cannot_release.status_code == 409
     avatar = client.post("/api/clients/me/avatar", headers=ch,
-        files={"file": ("avatar.jpg", b"fake-image", "image/jpeg")})
+        files={"file": ("avatar.jpg", b"\xff\xd8\xfffake-image", "image/jpeg")})
     assert avatar.status_code == 201
-    assert client.get("/api/clients/me", headers=ch).json()["avatar_url"].startswith("/uploads/clients/")
+    client_with_photo = client.get("/api/clients/me", headers=ch).json()
+    assert client_with_photo["avatar_url"].startswith("/uploads/clients/")
+    assert client_with_photo["avatar_mode"] == "photo"
+    selected_avatar = client.put(
+        "/api/users/me/avatar-preset",
+        headers=ch,
+        json={"preset": "jaguar_dj", "color": "#0EA5E9"},
+    )
+    assert selected_avatar.status_code == 200
+    assert selected_avatar.json()["mode"] == "preset"
+    switched = client.get("/api/clients/me", headers=ch).json()
+    assert switched["avatar_url"].startswith("/uploads/clients/")
+    assert switched["avatar_mode"] == "preset"
 
 
 def test_login_flow_and_invalid_credentials():
@@ -272,7 +327,6 @@ def test_login_flow_and_invalid_credentials():
         "email": "login@example.com", "password": "segura123", "role": "client"
     })
     assert registered.status_code == 201
-
     logged_in = client.post("/api/auth/login", json={
         "email": "LOGIN@example.com", "password": "segura123"
     })
@@ -385,6 +439,9 @@ def test_email_password_reset():
         "role": "client",
     })
     assert registered.status_code == 201
+    old_headers = {
+        "Authorization": f"Bearer {registered.json()['access_token']}"
+    }
     requested = client.post("/api/auth/password-reset/request", json={
         "email": "recuperacion@example.com",
     })
@@ -397,6 +454,7 @@ def test_email_password_reset():
         "new_password": "claveNueva123",
     })
     assert changed.status_code == 200
+    assert client.get("/api/users/me", headers=old_headers).status_code == 401
     assert client.post("/api/auth/login", json={
         "identifier": "recuperacion@example.com", "password": "claveNueva123",
     }).status_code == 200

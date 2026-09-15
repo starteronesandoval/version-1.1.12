@@ -64,7 +64,16 @@ def verify_google_token(token: str) -> dict:
 
 def create_token(user: User) -> str:
     expires = datetime.now(timezone.utc) + timedelta(minutes=settings.access_token_minutes)
-    return jwt.encode({"sub": str(user.id), "role": user.role.value, "exp": expires}, settings.secret_key, algorithm="HS256")
+    return jwt.encode(
+        {
+            "sub": str(user.id),
+            "role": user.role.value,
+            "ver": user.token_version,
+            "exp": expires,
+        },
+        settings.secret_key,
+        algorithm="HS256",
+    )
 
 
 def current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
@@ -75,7 +84,12 @@ def current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_
     except (InvalidTokenError, ValueError):
         raise credentials_error
     user = db.get(User, user_id)
-    if not user or not user.is_active:
+    if (
+        not user
+        or not user.is_active
+        or payload.get("ver") != user.token_version
+        or payload.get("role") != user.role.value
+    ):
         raise credentials_error
     return user
 

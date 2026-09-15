@@ -1,4 +1,5 @@
 import json
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -8,6 +9,10 @@ import smtplib
 import ssl
 import base64
 import jwt
+import stripe
+import time
+from collections import defaultdict, deque
+from threading import Lock
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from email.message import EmailMessage
@@ -20,17 +25,24 @@ from cryptography.fernet import Fernet
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import case, func, or_, select, text
+from sqlalchemy import case, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from .auth import (create_token, current_user, hash_password, require_role,
                    verify_google_token, verify_password)
-from .billing import release_musician_funds, router as billing_router
+from .billing import (
+    payout_release_deadline,
+    release_due_payouts,
+    release_musician_funds,
+    router as billing_router,
+    sync_connect_account,
+    stripe_client_ready,
+)
 from .config import settings
-from .database import get_db
+from .database import SessionLocal, get_db
 from .models import (AvatarChoice, Booking, BookingReview, ChatMessage, ClientAvatar,
                      ClientProfile, Media, MediaType, MusicianBusyDate,
                      MusicianProfile, MusicianPayoutDestination, PasswordResetCode, RulesAcceptance,
@@ -77,12 +89,32 @@ app.mount("/uploads", StaticFiles(directory=settings.upload_dir), name="uploads"
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    if request.url.path == "/api/billing/webhooks/stripe":
+        maximum_body = settings.max_stripe_webhook_bytes
+    elif request.url.path in {
+        "/api/clients/me/avatar", "/api/musicians/me/media",
+    }:
+        maximum_body = settings.max_video_bytes + 1024 * 1024
+    else:
+        maximum_body = settings.max_request_body_bytes
+    if content_length:
+        try:
+            if int(content_length) > maximum_body:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": "La solicitud supera el tamaño permitido"},
+                )
+        except ValueError:
+            return JSONResponse(
+                status_code=400, content={"detail": "Content-Length inválido"}
+            )
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    response.headers["Cache-Control"] = "no-store" if request.url.path.startswith("/api/auth") else "no-cache"
+    response.headers["Cache-Control"] = "no-store" if request.url.path.startswith("/api/") else "no-cache"
     if settings.app_env in {"staging", "production"}:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
@@ -90,6 +122,84 @@ async def security_headers(request: Request, call_next):
 GROUP_RULES_TYPE = "musician_group_rules"
 GROUP_RULES_VERSION = "GARIBALDY_GROUP_RULES_V1"
 logger = logging.getLogger(__name__)
+_rate_limit_events: dict[str, deque[float]] = defaultdict(deque)
+_rate_limit_lock = Lock()
+
+
+async def automatic_payout_release_loop() -> None:
+    while True:
+        try:
+            with SessionLocal() as db:
+                release_due_payouts(db)
+        except Exception:
+            logger.exception("Falló la revisión automática de pagos por liberar")
+        await asyncio.sleep(settings.payout_release_scan_seconds)
+
+
+@app.on_event("startup")
+async def start_automatic_payout_release() -> None:
+    app.state.payout_release_task = asyncio.create_task(
+        automatic_payout_release_loop()
+    )
+
+
+@app.on_event("shutdown")
+async def stop_automatic_payout_release() -> None:
+    task = getattr(app.state, "payout_release_task", None)
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+def request_client_ip(request: Request) -> str:
+    if settings.trust_cloudflare_headers:
+        cloudflare_ip = request.headers.get("cf-connecting-ip", "").strip()
+        if cloudflare_ip:
+            return cloudflare_ip
+    return request.client.host if request.client else "unknown"
+
+
+def enforce_rate_limit(
+    request: Request, scope: str, *, limit: int, window_seconds: int,
+    identity: str = "",
+) -> None:
+    keys = [f"{scope}:ip:{request_client_ip(request)}"]
+    normalized_identity = identity.strip().lower()
+    if normalized_identity:
+        keys.append(f"{scope}:identity:{normalized_identity}")
+    if settings.app_env == "test":
+        keys = keys[1:] or keys
+    now = time.monotonic()
+    cutoff = now - window_seconds
+    with _rate_limit_lock:
+        buckets = []
+        for key in keys:
+            events = _rate_limit_events[key]
+            while events and events[0] <= cutoff:
+                events.popleft()
+            if len(events) >= limit:
+                raise HTTPException(429, "Demasiados intentos. Inténtalo más tarde.")
+            buckets.append(events)
+        for events in buckets:
+            events.append(now)
+
+
+def validate_upload_signature(target: Path, content_type: str) -> None:
+    with target.open("rb") as uploaded:
+        header = uploaded.read(16)
+    valid = {
+        "image/jpeg": header.startswith(b"\xff\xd8\xff"),
+        "image/png": header.startswith(b"\x89PNG\r\n\x1a\n"),
+        "image/webp": header.startswith(b"RIFF") and header[8:12] == b"WEBP",
+        "video/mp4": len(header) >= 12 and header[4:8] == b"ftyp",
+        "video/webm": header.startswith(b"\x1aE\xdf\xa3"),
+    }.get(content_type, False)
+    if not valid:
+        target.unlink(missing_ok=True)
+        raise HTTPException(415, "El contenido del archivo no coincide con su tipo")
 
 
 def payout_cipher() -> Fernet:
@@ -276,25 +386,39 @@ def musician_profiles():
 
 
 def payout_eligible(profile: MusicianProfile, db: Session) -> bool:
-    return db.scalar(select(func.count(Booking.id)).where(
-        Booking.musician_id == profile.id,
-        Booking.payment_status == "paid",
-    )) > 0
+    # Configuring deposits before the first event avoids holding an approved payment.
+    return True
 
 
 def payout_out(
     profile: MusicianProfile, db: Session
 ) -> PayoutDestinationResponse:
     destination = profile.payout_destination
+    requirements = []
+    if destination and destination.stripe_requirements_due:
+        try:
+            requirements = json.loads(destination.stripe_requirements_due)
+        except (TypeError, json.JSONDecodeError):
+            requirements = []
+    if not destination or not destination.stripe_connected_account_id:
+        onboarding_status = "not_started"
+    elif destination.stripe_payouts_enabled:
+        onboarding_status = "ready"
+    elif destination.stripe_details_submitted:
+        onboarding_status = "pending_verification"
+    else:
+        onboarding_status = "incomplete"
     return PayoutDestinationResponse(
         eligible=payout_eligible(profile, db),
-        configured=destination is not None,
+        configured=bool(destination and destination.stripe_connected_account_id),
         destination_type=(destination.destination_type if destination else None),
         last4=(destination.last4 if destination else None),
         updated_at=(destination.updated_at if destination else None),
-        stripe_connect_ready=bool(
-            destination and destination.stripe_connected_account_id
-        ),
+        stripe_connect_ready=bool(destination and destination.stripe_payouts_enabled),
+        onboarding_status=onboarding_status,
+        requirements_due=requirements,
+        last_payout_status=(destination.last_stripe_payout_status if destination else None),
+        last_payout_error=(destination.last_stripe_payout_error if destination else None),
     )
 
 
@@ -311,13 +435,17 @@ def musician_out(
         id=profile.id, user_id=profile.user_id, contact_name=profile.contact_name,
         city=profile.city, municipality=profile.municipality, state=profile.state,
         group_name=profile.group_name, group_type=profile.group_type,
-        musical_style=profile.musical_style, member_count=profile.member_count,
-        hourly_rate=float(hourly_rate), includes_sound=profile.includes_sound,
+        musical_style=profile.musical_style, card_theme=profile.card_theme,
+        member_count=profile.member_count,
+        hourly_rate=float(hourly_rate),
+        minimum_booking_hours=profile.minimum_booking_hours,
+        includes_sound=profile.includes_sound,
         subwoofer_count=profile.subwoofer_count, mid_speaker_count=profile.mid_speaker_count,
         equipment_brands=values(profile.equipment_brands), audience_capacity=profile.audience_capacity,
         description=profile.description, media=profile.media,
         avatar_preset=choice.preset if choice else "jaguar_guitar",
         avatar_color=choice.color if choice else "#8B5CF6",
+        avatar_mode=choice.mode if choice else "photo",
         rating=(round(sum(r.overall_score for r in profile.reviews) / len(profile.reviews), 2)
                 if profile.reviews else None),
         review_count=len(profile.reviews),
@@ -337,6 +465,7 @@ def client_out(profile: ClientProfile) -> ClientProfileResponse:
         avatar_url=profile.avatar.url if profile.avatar else None,
         avatar_preset=choice.preset if choice else "jaguar_guitar",
         avatar_color=choice.color if choice else "#8B5CF6",
+        avatar_mode=choice.mode if choice else "photo",
         profile_complete=bool(profile.admin_phone and profile.city
                               and profile.municipality and profile.state),
         admin_phone_saved=bool(profile.admin_phone),
@@ -393,6 +522,18 @@ def booking_out(
             else None
         ),
         event_finished=booking_event_finished(booking),
+        payout_release_deadline=payout_release_deadline(booking),
+        can_release_payment=(
+            booking.payment_status == "paid"
+            and booking_event_finished(booking)
+            and booking.payout_status == "musician_funds_held"
+        ),
+        can_dispute_payment=(
+            booking.payment_status == "paid"
+            and booking_event_finished(booking)
+            and booking_payout_window_open(booking)
+            and booking.payout_status == "musician_funds_held"
+        ),
         is_new_sale=(
             datetime.now(timezone.utc).replace(tzinfo=None) - booking.created_at
             < timedelta(hours=24)
@@ -404,6 +545,11 @@ def booking_event_finished(booking: Booking) -> bool:
     timezone = ZoneInfo(settings.event_timezone)
     ends_at = datetime.combine(booking.event_date, booking.end_time, tzinfo=timezone)
     return datetime.now(timezone) >= ends_at
+
+
+def booking_payout_window_open(booking: Booking) -> bool:
+    event_timezone = ZoneInfo(settings.event_timezone)
+    return datetime.now(event_timezone) < payout_release_deadline(booking)
 
 
 def booking_review_state(booking: Booking) -> tuple[bool, str]:
@@ -527,7 +673,11 @@ def download_local_android_build():
 
 
 @app.post("/api/auth/register", response_model=TokenResponse, status_code=201)
-def register(data: RegisterRequest, db: Session = Depends(get_db)):
+def register(data: RegisterRequest, request: Request, db: Session = Depends(get_db)):
+    enforce_rate_limit(
+        request, "register", limit=settings.auth_rate_limit_per_minute,
+        window_seconds=60, identity=str(data.email),
+    )
     if data.role == UserRole.admin:
         raise HTTPException(403, "El rol administrador no admite registro público")
     email = str(data.email).strip().lower()
@@ -542,7 +692,11 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
 
 
 @app.post("/api/auth/login", response_model=TokenResponse)
-def login(data: LoginRequest, db: Session = Depends(get_db)):
+def login(data: LoginRequest, request: Request, db: Session = Depends(get_db)):
+    enforce_rate_limit(
+        request, "login", limit=settings.auth_rate_limit_per_minute,
+        window_seconds=60, identity=data.identifier or "",
+    )
     user = find_user(data.identifier or "", db)
     if not user or not user.is_active or not verify_password(data.password, user.password_hash):
         raise HTTPException(401, "Correo, celular o contraseña incorrectos")
@@ -550,7 +704,11 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
 
 
 @app.post("/api/auth/google", response_model=TokenResponse)
-def google_auth(data: GoogleAuthRequest, db: Session = Depends(get_db)):
+def google_auth(data: GoogleAuthRequest, request: Request, db: Session = Depends(get_db)):
+    enforce_rate_limit(
+        request, "google-auth", limit=settings.auth_rate_limit_per_minute,
+        window_seconds=60,
+    )
     claims = verify_google_token(data.id_token)
     subject = str(claims["sub"])
     email = str(claims["email"]).strip().lower()
@@ -603,8 +761,13 @@ def google_auth(data: GoogleAuthRequest, db: Session = Depends(get_db)):
     response_model=PasswordResetRequestResponse,
 )
 def request_password_reset(
-    data: PasswordResetRequest, db: Session = Depends(get_db)
+    data: PasswordResetRequest, request: Request, db: Session = Depends(get_db)
 ):
+    enforce_rate_limit(
+        request, "password-reset-request",
+        limit=settings.password_reset_rate_limit_per_hour,
+        window_seconds=3600, identity=str(data.email),
+    )
     email = str(data.email).strip().lower()
     user = db.scalar(select(User).where(User.email == email))
     message = "Si la cuenta existe, generamos un código válido durante 15 minutos."
@@ -642,8 +805,13 @@ def request_password_reset(
 
 @app.post("/api/auth/password-reset/confirm")
 def confirm_password_reset(
-    data: PasswordResetConfirm, db: Session = Depends(get_db)
+    data: PasswordResetConfirm, request: Request, db: Session = Depends(get_db)
 ):
+    enforce_rate_limit(
+        request, "password-reset-confirm",
+        limit=settings.auth_rate_limit_per_minute,
+        window_seconds=60, identity=str(data.email),
+    )
     email = str(data.email).strip().lower()
     user = db.scalar(select(User).where(User.email == email))
     if not user:
@@ -667,6 +835,7 @@ def confirm_password_reset(
             db.commit()
         raise HTTPException(400, "Código inválido o vencido")
     user.password_hash = hash_password(data.new_password)
+    user.token_version += 1
     reset.used = True
     db.commit()
     return {"message": "Tu contraseña fue actualizada correctamente."}
@@ -775,11 +944,19 @@ def set_avatar_preset(data: AvatarChoiceUpdate, user: User = Depends(current_use
         raise HTTPException(422, "Avatar no disponible")
     choice = db.scalar(select(AvatarChoice).where(AvatarChoice.user_id == user.id))
     if choice:
-        choice.preset = data.preset; choice.color = data.color.upper()
+        choice.preset = data.preset
+        choice.color = data.color.upper()
+        choice.mode = "preset"
     else:
-        choice = AvatarChoice(user_id=user.id, preset=data.preset, color=data.color.upper()); db.add(choice)
+        choice = AvatarChoice(
+            user_id=user.id,
+            preset=data.preset,
+            color=data.color.upper(),
+            mode="preset",
+        )
+        db.add(choice)
     db.commit(); db.refresh(choice)
-    return {"preset": choice.preset, "color": choice.color}
+    return {"preset": choice.preset, "color": choice.color, "mode": choice.mode}
 
 
 @app.put("/api/clients/me", response_model=ClientProfileResponse, response_model_exclude_none=True)
@@ -821,6 +998,7 @@ def upload_client_avatar(file: UploadFile = File(...),
     folder = settings.upload_dir / "clients" / str(profile.id); folder.mkdir(parents=True, exist_ok=True)
     target = folder / f"avatar-{uuid4().hex}{extension}"
     save_upload(file, target, settings.max_image_bytes)
+    validate_upload_signature(target, file.content_type)
     public_url = f"/uploads/clients/{profile.id}/{target.name}"
     if profile.avatar:
         old = settings.upload_dir / "clients" / str(profile.id) / Path(profile.avatar.url).name
@@ -828,6 +1006,11 @@ def upload_client_avatar(file: UploadFile = File(...),
         profile.avatar.url = public_url
     else:
         db.add(ClientAvatar(client_id=profile.id, url=public_url))
+    choice = db.scalar(select(AvatarChoice).where(AvatarChoice.user_id == user.id))
+    if choice:
+        choice.mode = "photo"
+    else:
+        db.add(AvatarChoice(user_id=user.id, mode="photo"))
     db.commit()
     return {"url": public_url}
 
@@ -890,43 +1073,11 @@ def get_payout_destination(
 def set_payout_destination(
     data: PayoutDestinationUpsert,
     user: User = Depends(require_role(UserRole.musician)),
-    db: Session = Depends(get_db),
 ):
-    profile = db.scalar(musician_profiles().where(
-        MusicianProfile.user_id == user.id
-    ))
-    if not profile:
-        raise HTTPException(409, "Crea primero el perfil de la agrupación")
-    if not payout_eligible(profile, db):
-        raise HTTPException(
-            403,
-            "La cuenta de depósito se habilita al confirmar tu primer contrato pagado",
-        )
-    number = re.sub(r"\D", "", data.account_number)
-    if data.destination_type == "clabe" and not valid_clabe(number):
-        raise HTTPException(422, "La CLABE debe contener 18 dígitos válidos")
-    if data.destination_type == "debit_card" and not valid_card_number(number):
-        raise HTTPException(422, "La tarjeta de débito debe contener 16 dígitos válidos")
-    encrypted = payout_cipher().encrypt(number.encode("ascii")).decode("ascii")
-    destination = profile.payout_destination
-    if destination:
-        destination.destination_type = data.destination_type
-        destination.encrypted_number = encrypted
-        destination.last4 = number[-4:]
-        destination.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    else:
-        destination = MusicianPayoutDestination(
-            musician_id=profile.id,
-            destination_type=data.destination_type,
-            encrypted_number=encrypted,
-            last4=number[-4:],
-        )
-        db.add(destination)
-    db.commit()
-    profile = db.scalar(musician_profiles().where(
-        MusicianProfile.user_id == user.id
-    ))
-    return payout_out(profile, db)
+    raise HTTPException(
+        410,
+        "Por seguridad, registra tus datos bancarios directamente en Stripe",
+    )
 
 
 @app.put("/api/admin/musicians/{musician_id}/stripe-connect")
@@ -944,23 +1095,35 @@ def link_stripe_connect_account(
     ))
     if not destination:
         raise HTTPException(409, "La agrupación aún no registra cuenta de depósito")
+    stripe_client_ready()
+    try:
+        account = stripe.Account.retrieve(data.account_id)
+    except stripe.error.StripeError as exc:
+        raise HTTPException(422, "Stripe no pudo verificar la cuenta Connect") from exc
+    account_data = (
+        account.to_dict_recursive()
+        if hasattr(account, "to_dict_recursive")
+        else dict(account)
+    )
+    metadata = account_data.get("metadata") or {}
+    if (
+        account_data.get("country") != "MX"
+        or account_data.get("details_submitted") is not True
+        or account_data.get("payouts_enabled") is not True
+        or metadata.get("balam_musician_id") != str(musician_id)
+    ):
+        raise HTTPException(
+            422,
+            "La cuenta Connect no está habilitada o no pertenece a esta agrupación",
+        )
     destination.stripe_connected_account_id = data.account_id
+    sync_connect_account(account, db)
     db.commit()
-    pending_ids = list(db.scalars(select(Booking.id).where(
-        Booking.musician_id == musician_id,
-        Booking.payout_status.in_(("pending_connect_account", "transfer_failed")),
-        Booking.review.has(),
-    )).all())
-    for booking_id in pending_ids:
-        pending = db.get(Booking, booking_id)
-        pending.payout_status = "approved_for_payout"
-        pending.payout_error = None
-        db.commit()
-        release_musician_funds(booking_id, db)
     return {
         "musician_id": musician_id,
         "stripe_connect_ready": True,
-        "retried_transfers": len(pending_ids),
+        "retried_transfers": 0,
+        "requires_payout_approval": True,
     }
 
 
@@ -1185,6 +1348,16 @@ def create_booking(
         raise HTTPException(
             409, "Lo sentimos, el grupo ya tiene compromiso ese día."
         )
+    start_minutes = data.start_time.hour * 60 + data.start_time.minute
+    end_minutes = data.end_time.hour * 60 + data.end_time.minute
+    requested_minutes = end_minutes - start_minutes
+    minimum_minutes = musician.minimum_booking_hours * 60
+    if requested_minutes < minimum_minutes:
+        raise HTTPException(
+            422,
+            f"Esta agrupación acepta contratos a partir de "
+            f"{musician.minimum_booking_hours} horas",
+        )
     booking = Booking(
         musician_id=musician.id,
         client_id=client.id,
@@ -1298,16 +1471,52 @@ def create_booking_review(
         **data.model_dump(exclude={"recommendation"}),
     )
     db.add(review)
-    booking.payout_status = "approved_for_payout"
-    booking.approved_for_payout_at = datetime.now(timezone.utc).replace(tzinfo=None)
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "Ya calificaste este evento")
     db.refresh(review)
-    release_musician_funds(booking.id, db)
     return review
+
+
+@app.post("/api/bookings/{booking_id}/release")
+def release_booking_payment(
+    booking_id: int,
+    user: User = Depends(require_role(UserRole.client)),
+    db: Session = Depends(get_db),
+):
+    booking = db.scalar(booking_query().where(Booking.id == booking_id))
+    if not booking:
+        raise HTTPException(404, "Contratación no encontrada")
+    if booking.client.user_id != user.id:
+        raise HTTPException(403, "Esta contratación pertenece a otro cliente")
+    if booking.payment_status != "paid":
+        raise HTTPException(409, "El pago aún no está confirmado")
+    if not booking_event_finished(booking):
+        raise HTTPException(403, "Podrás liberar el pago al terminar el evento")
+    approved_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    result = db.execute(
+        update(Booking)
+        .where(
+            Booking.id == booking.id,
+            Booking.payment_status == "paid",
+            Booking.payout_status == "musician_funds_held",
+        )
+        .values(
+            payout_status="approved_for_payout",
+            approved_for_payout_at=approved_at,
+        )
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(
+            409, "El pago ya fue liberado o tiene una disputa abierta"
+        )
+    db.commit()
+    release_musician_funds(booking.id, db)
+    saved = db.get(Booking, booking.id)
+    return {"booking_id": saved.id, "payout_status": saved.payout_status}
 
 
 @app.post("/api/bookings/{booking_id}/dispute")
@@ -1326,13 +1535,29 @@ def open_booking_dispute(
         raise HTTPException(409, "El pago aún no está confirmado")
     if not booking_event_finished(booking):
         raise HTTPException(403, "Podrás reportar un problema al terminar el evento")
-    if booking.payout_status in {"approved_for_payout", "paid_out"}:
-        raise HTTPException(409, "El pago ya fue autorizado para la agrupación")
-    booking.payout_status = "disputed"
-    booking.dispute_reason = data.reason.strip()
-    booking.dispute_opened_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    if not booking_payout_window_open(booking):
+        raise HTTPException(
+            409,
+            "El plazo de 2 horas terminó y el pago ya fue autorizado para la agrupación",
+        )
+    opened_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    result = db.execute(
+        update(Booking)
+        .where(
+            Booking.id == booking.id,
+            Booking.payout_status == "musician_funds_held",
+        )
+        .values(
+            payout_status="disputed",
+            dispute_reason=data.reason.strip(),
+            dispute_opened_at=opened_at,
+        )
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(409, "El pago ya fue autorizado o tiene una disputa abierta")
     db.commit()
-    return {"booking_id": booking.id, "payout_status": booking.payout_status}
+    return {"booking_id": booking.id, "payout_status": "disputed"}
 
 
 @app.put("/api/admin/bookings/{booking_id}/payout")
@@ -1353,17 +1578,10 @@ def admin_payout_action(
         if data.action == "reject_dispute":
             booking.dispute_reason = None
     elif data.action == "mark_paid":
-        if booking.payout_status != "approved_for_payout":
-            raise HTTPException(409, "El pago todavía no está autorizado")
-        destination = db.scalar(select(MusicianPayoutDestination).where(
-            MusicianPayoutDestination.musician_id == booking.musician_id
-        ))
-        if not destination:
-            raise HTTPException(
-                409, "La agrupación aún no registra una cuenta de depósito"
-            )
-        booking.payout_status = "paid_out"
-        booking.paid_out_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        raise HTTPException(
+            409,
+            "Stripe confirma automáticamente el depósito bancario; no puede marcarse manualmente",
+        )
     db.commit()
     if data.action in {"approve", "reject_dispute"}:
         release_musician_funds(booking.id, db)
@@ -1548,6 +1766,7 @@ def upload_media(media_type: MediaType, position: int = Query(ge=1), file: Uploa
     target = folder / f"{media_type.value}-{position}-{uuid4().hex}{extension}"
     maximum_bytes = settings.max_video_bytes if media_type == MediaType.video else settings.max_image_bytes
     save_upload(file, target, maximum_bytes)
+    validate_upload_signature(target, file.content_type)
     existing = db.scalar(select(Media).where(Media.musician_id == profile.id, Media.media_type == media_type, Media.position == position))
     public_url = f"/uploads/{profile.id}/{target.name}"
     if existing:
@@ -1556,5 +1775,11 @@ def upload_media(media_type: MediaType, position: int = Query(ge=1), file: Uploa
         existing.url = public_url
     else:
         existing = Media(musician_id=profile.id, media_type=media_type, position=position, url=public_url); db.add(existing)
+    if media_type == MediaType.profile_photo:
+        choice = db.scalar(select(AvatarChoice).where(AvatarChoice.user_id == user.id))
+        if choice:
+            choice.mode = "photo"
+        else:
+            db.add(AvatarChoice(user_id=user.id, mode="photo"))
     db.commit(); db.refresh(existing)
     return {"id": existing.id, "media_type": existing.media_type, "position": existing.position, "url": existing.url}

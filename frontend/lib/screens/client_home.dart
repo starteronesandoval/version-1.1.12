@@ -7,9 +7,11 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../api_service.dart';
 import '../widgets/booking_chat_sheet.dart';
+import '../widgets/booking_payout_actions.dart';
 import '../widgets/event_chat_scanner.dart';
 import '../widgets/booking_review_sheet.dart';
 import '../widgets/glass_ui.dart';
+import '../widgets/network_video_player.dart';
 import 'rhythm_game_screen.dart';
 
 class ClientHome extends StatefulWidget {
@@ -126,16 +128,21 @@ class _ClientHomeState extends State<ClientHome> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Colors.black,
     extendBodyBehindAppBar: true,
     appBar: AppBar(
       backgroundColor: Colors.transparent,
+      foregroundColor: Colors.white,
       title: const Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Descubre', style: TextStyle(fontWeight: FontWeight.w800)),
+          Text(
+            'Descubre',
+            style: TextStyle(fontWeight: FontWeight.w800, color: Colors.white),
+          ),
           Text(
             'música para tu momento',
-            style: TextStyle(fontSize: 12, color: Color(0xFFC8B5EE)),
+            style: TextStyle(fontSize: 12, color: Color(0xFFB8C1C8)),
           ),
         ],
       ),
@@ -195,7 +202,8 @@ class _ClientHomeState extends State<ClientHome> {
                 ),
               ],
     ),
-    body: GlassBackground(
+    body: ColoredBox(
+      color: Colors.black,
       child: SafeArea(
         child:
             profileLoading
@@ -207,8 +215,10 @@ class _ClientHomeState extends State<ClientHome> {
                     Padding(
                       padding: const EdgeInsets.fromLTRB(18, 14, 18, 12),
                       child: GlassCard(
+                        light: true,
                         padding: EdgeInsets.zero,
                         child: TextField(
+                          style: const TextStyle(color: Color(0xFF17202A)),
                           controller: search,
                           onChanged: (_) {
                             debounce?.cancel();
@@ -218,8 +228,12 @@ class _ClientHomeState extends State<ClientHome> {
                             );
                           },
                           decoration: const InputDecoration(
-                            prefixIcon: Icon(Icons.search),
+                            prefixIcon: Icon(
+                              Icons.search,
+                              color: Color(0xFF17202A),
+                            ),
                             hintText: 'Busca nombre, estilo o tipo de grupo',
+                            hintStyle: TextStyle(color: Color(0xFF66747D)),
                             border: InputBorder.none,
                           ),
                         ),
@@ -235,13 +249,14 @@ class _ClientHomeState extends State<ClientHome> {
                               style: TextStyle(
                                 fontSize: 19,
                                 fontWeight: FontWeight.w700,
+                                color: Colors.white,
                               ),
                             ),
                           ),
                           Text(
                             '${results.length}',
                             style: const TextStyle(
-                              color: Color(0xFFBFA1FF),
+                              color: Colors.white70,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
@@ -254,7 +269,10 @@ class _ClientHomeState extends State<ClientHome> {
                       child:
                           results.isEmpty && !loading
                               ? const Center(
-                                child: Text('Aún no encontramos agrupaciones'),
+                                child: Text(
+                                  'Aún no encontramos agrupaciones',
+                                  style: TextStyle(color: Colors.white),
+                                ),
                               )
                               : ListView.separated(
                                 padding: const EdgeInsets.fromLTRB(
@@ -324,7 +342,10 @@ class _ClientHomeState extends State<ClientHome> {
 
   Widget _smallAvatar() => ProfileAvatar(
     radius: 17,
-    url: widget.api.mediaUrl(clientProfile?['avatar_url']),
+    url:
+        clientProfile?['avatar_mode'] == 'preset'
+            ? null
+            : widget.api.mediaUrl(clientProfile?['avatar_url']),
     fallback: clientProfile?['name'] ?? 'C',
     preset: clientProfile?['avatar_preset'] ?? 'jaguar_guitar',
     color: clientProfile?['avatar_color'] ?? '#8B5CF6',
@@ -349,112 +370,128 @@ class _ClientHomeState extends State<ClientHome> {
             .where((item) => item['media_type'] == 'profile_photo')
             .firstOrNull;
     return GlassCard(
+      light: true,
+      theme: resolveGroupTheme(
+        selected: band['card_theme']?.toString(),
+        groupType: band['group_type']?.toString(),
+        musicalStyle: band['musical_style']?.toString(),
+      ),
       onTap: () => _showBand(context, band),
-      child: Row(
-        children: [
-          ProfileAvatar(
-            url: widget.api.mediaUrl(avatar?['url']),
-            fallback: band['group_name'],
-            preset: band['avatar_preset'] ?? 'jaguar_guitar',
-            color: band['avatar_color'] ?? '#8B5CF6',
-            radius: 38,
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        band['group_name'],
-                        style: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
+      child: DefaultTextStyle.merge(
+        style: const TextStyle(color: Color(0xFF17202A)),
+        child: Row(
+          children: [
+            ProfileAvatar(
+              url:
+                  band['avatar_mode'] == 'preset'
+                      ? null
+                      : widget.api.mediaUrl(avatar?['url']),
+              fallback: band['group_name'],
+              preset: band['avatar_preset'] ?? 'jaguar_guitar',
+              color: band['avatar_color'] ?? '#8B5CF6',
+              radius: 38,
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          band['group_name'],
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                          ),
                         ),
                       ),
-                    ),
-                    const Icon(
-                      Icons.verified,
-                      color: Color(0xFF68DDCD),
-                      size: 18,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Corriente musical: ${band['musical_style']}',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: Colors.white.withValues(alpha: .67)),
-                ),
-                const SizedBox(height: 5),
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.location_on_outlined,
-                      size: 16,
-                      color: Color(0xFF68DDCD),
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        _bandLocation(band),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.white.withValues(alpha: .62),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 7),
-                Row(
-                  children: [
-                    Icon(
-                      band['rating'] == null
-                          ? Icons.star_border_rounded
-                          : Icons.star_rounded,
-                      size: 18,
-                      color: const Color(0xFFFFC857),
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      band['rating'] == null
-                          ? 'Sin calificaciones'
-                          : '${band['rating']} (${band['review_count']})',
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.payments_outlined,
-                      size: 17,
-                      color: Color(0xFFBFA1FF),
-                    ),
-                    Text(
-                      '  \$${band['hourly_rate']} / hora',
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    const Spacer(),
-                    if (band['includes_sound'])
                       const Icon(
-                        Icons.speaker_group_outlined,
-                        size: 19,
+                        Icons.verified,
+                        color: Color(0xFF68DDCD),
+                        size: 18,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Corriente musical: ${band['musical_style']}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Color(0xFF45545E)),
+                  ),
+                  const SizedBox(height: 5),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.location_on_outlined,
+                        size: 16,
                         color: Color(0xFF68DDCD),
                       ),
-                  ],
-                ),
-              ],
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          _bandLocation(band),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: const Color(0xFF56656E),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 7),
+                  Row(
+                    children: [
+                      Icon(
+                        band['rating'] == null
+                            ? Icons.star_border_rounded
+                            : Icons.star_rounded,
+                        size: 18,
+                        color: const Color(0xFFFFC857),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        band['rating'] == null
+                            ? 'Sin calificaciones'
+                            : '${band['rating']} (${band['review_count']})',
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.payments_outlined,
+                        size: 17,
+                        color: Color(0xFFBFA1FF),
+                      ),
+                      Text(
+                        '  \$${band['hourly_rate']} / hora',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      Text(
+                        ' · mínimo ${band['minimum_booking_hours'] ?? 2} h',
+                        style: TextStyle(color: const Color(0xFF56656E)),
+                      ),
+                      const Spacer(),
+                      if (band['includes_sound'])
+                        const Icon(
+                          Icons.speaker_group_outlined,
+                          size: 19,
+                          color: Color(0xFF68DDCD),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -468,6 +505,11 @@ class _ClientHomeState extends State<ClientHome> {
             .firstOrNull;
     final photos =
         media.where((item) => item['media_type'] == 'photo').toList()..sort(
+          (first, second) =>
+              (first['position'] as num).compareTo(second['position'] as num),
+        );
+    final videos =
+        media.where((item) => item['media_type'] == 'video').toList()..sort(
           (first, second) =>
               (first['position'] as num).compareTo(second['position'] as num),
         );
@@ -488,7 +530,10 @@ class _ClientHomeState extends State<ClientHome> {
                   children: [
                     Center(
                       child: ProfileAvatar(
-                        url: widget.api.mediaUrl(avatar?['url']),
+                        url:
+                            band['avatar_mode'] == 'preset'
+                                ? null
+                                : widget.api.mediaUrl(avatar?['url']),
                         fallback: band['group_name'],
                         preset: band['avatar_preset'] ?? 'jaguar_guitar',
                         color: band['avatar_color'] ?? '#8B5CF6',
@@ -551,6 +596,12 @@ class _ClientHomeState extends State<ClientHome> {
                             'Por hora',
                           ),
                         ),
+                        Expanded(
+                          child: _miniStat(
+                            '${band['minimum_booking_hours'] ?? 2} horas',
+                            'Contrato mínimo',
+                          ),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 20),
@@ -589,6 +640,23 @@ class _ClientHomeState extends State<ClientHome> {
                               fit: BoxFit.fitWidth,
                             ),
                           ),
+                        ),
+                        const SizedBox(height: 14),
+                      ],
+                    ],
+                    if (videos.isNotEmpty) ...[
+                      const SizedBox(height: 18),
+                      const Text(
+                        'En escena',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      for (final video in videos) ...[
+                        NetworkVideoPlayer(
+                          url: widget.api.mediaUrl(video['url'])!,
                         ),
                         const SizedBox(height: 14),
                       ],
@@ -656,6 +724,8 @@ class _ClientHomeState extends State<ClientHome> {
                   startMinutes == null || endMinutes == null
                       ? null
                       : endMinutes - startMinutes;
+              final minimumMinutes =
+                  ((band['minimum_booking_hours'] as num?)?.toInt() ?? 2) * 60;
               final hourlyRateCents =
                   ((band['hourly_rate'] as num).toDouble() * 100).round();
               final subtotalCents =
@@ -695,6 +765,12 @@ class _ClientHomeState extends State<ClientHome> {
                           style: TextStyle(
                             color: Colors.white.withValues(alpha: .66),
                           ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Contrato mínimo: ${band['minimum_booking_hours'] ?? 2} horas.',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Color(0xFFFFC857)),
                         ),
                         const SizedBox(height: 20),
                         OutlinedButton.icon(
@@ -969,6 +1045,19 @@ class _ClientHomeState extends State<ClientHome> {
                                         );
                                         return;
                                       }
+                                      if (durationMinutes == null ||
+                                          durationMinutes < minimumMinutes) {
+                                        ScaffoldMessenger.of(
+                                          sheetContext,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              'Esta agrupación acepta contratos a partir de ${band['minimum_booking_hours'] ?? 2} horas.',
+                                            ),
+                                          ),
+                                        );
+                                        return;
+                                      }
                                       setSheetState(() => booking = true);
                                       try {
                                         final response =
@@ -1179,63 +1268,6 @@ class _ClientHomeState extends State<ClientHome> {
     }
   }
 
-  Future<void> _reportBookingProblem(
-    BuildContext dialogContext,
-    Map<String, dynamic> booking,
-  ) async {
-    final reason = TextEditingController();
-    final confirmed = await showDialog<bool>(
-      context: dialogContext,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('Reportar un problema'),
-            content: TextField(
-              controller: reason,
-              minLines: 3,
-              maxLines: 6,
-              decoration: const InputDecoration(
-                labelText: 'Describe lo ocurrido',
-                hintText: 'La liberación al músico quedará detenida.',
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancelar'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Detener liberación'),
-              ),
-            ],
-          ),
-    );
-    if (confirmed != true) {
-      reason.dispose();
-      return;
-    }
-    try {
-      await widget.api.post('/api/bookings/${booking['id']}/dispute', {
-        'reason': reason.text.trim(),
-      });
-      booking['payout_status'] = 'disputed';
-      if (mounted) {
-        setState(() {});
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Liberación detenida para revisión.')),
-        );
-      }
-    } on ApiException catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
-      }
-    } finally {
-      reason.dispose();
-    }
-  }
-
   Future<void> _contractsSheet(BuildContext context) async {
     await loadClientBookings();
     if (!context.mounted) return;
@@ -1373,23 +1405,14 @@ class _ClientHomeState extends State<ClientHome> {
                                   ),
                                 ),
                                 const SizedBox(height: 8),
-                                if (item['event_finished'] == true &&
-                                    item['payment_status'] == 'paid' &&
-                                    item['payout_status'] ==
-                                        'musician_funds_held') ...[
-                                  OutlinedButton.icon(
-                                    onPressed:
-                                        () => _reportBookingProblem(
-                                          sheetContext,
-                                          item,
-                                        ),
-                                    icon: const Icon(
-                                      Icons.report_problem_outlined,
-                                    ),
-                                    label: const Text('Reportar un problema'),
-                                  ),
-                                  const SizedBox(height: 8),
-                                ],
+                                BookingPayoutActions(
+                                  api: widget.api,
+                                  booking: item,
+                                  onChanged: () {
+                                    if (mounted) setState(() {});
+                                  },
+                                ),
+                                const SizedBox(height: 8),
                                 if (item['can_review'] == true)
                                   FilledButton.icon(
                                     onPressed: () async {
@@ -1414,8 +1437,6 @@ class _ClientHomeState extends State<ClientHome> {
                                             result['overall_score'];
                                         item['review_status'] =
                                             'Ya calificaste este evento.';
-                                        item['payout_status'] =
-                                            'approved_for_payout';
                                         if (mounted) setState(() {});
                                       }
                                     },
@@ -1561,23 +1582,14 @@ class _ClientHomeState extends State<ClientHome> {
                                   ),
                                 ),
                                 const SizedBox(height: 14),
-                                if (item['event_finished'] == true &&
-                                    item['payment_status'] == 'paid' &&
-                                    item['payout_status'] ==
-                                        'musician_funds_held') ...[
-                                  OutlinedButton.icon(
-                                    onPressed:
-                                        () => _reportBookingProblem(
-                                          sheetContext,
-                                          item,
-                                        ),
-                                    icon: const Icon(
-                                      Icons.report_problem_outlined,
-                                    ),
-                                    label: const Text('Reportar un problema'),
-                                  ),
-                                  const SizedBox(height: 8),
-                                ],
+                                BookingPayoutActions(
+                                  api: widget.api,
+                                  booking: item,
+                                  onChanged: () {
+                                    if (mounted) setState(() {});
+                                  },
+                                ),
+                                const SizedBox(height: 8),
                                 if (item['can_review'] == true)
                                   FilledButton.icon(
                                     style: FilledButton.styleFrom(
@@ -1603,8 +1615,6 @@ class _ClientHomeState extends State<ClientHome> {
                                         item['can_review'] = false;
                                         item['review_score'] =
                                             result['overall_score'];
-                                        item['payout_status'] =
-                                            'approved_for_payout';
                                         await loadClientBookings();
                                         if (sheetContext.mounted) {
                                           Navigator.pop(sheetContext);
@@ -1746,7 +1756,12 @@ class _ClientHomeState extends State<ClientHome> {
                   Stack(
                     children: [
                       ProfileAvatar(
-                        url: widget.api.mediaUrl(clientProfile?['avatar_url']),
+                        url:
+                            clientProfile?['avatar_mode'] == 'preset'
+                                ? null
+                                : widget.api.mediaUrl(
+                                  clientProfile?['avatar_url'],
+                                ),
                         fallback: clientProfile?['name'] ?? 'C',
                         preset:
                             clientProfile?['avatar_preset'] ?? 'jaguar_guitar',

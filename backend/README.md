@@ -69,17 +69,24 @@ Los contratos ya creados conservan el importe congelado originalmente.
 
 ### Regla de alta para recibir ganancias
 
-El registro inicial del músico no solicita RFC, CLABE ni documentación de
-Stripe. La opción **Configura tu cuenta para recibir ganancias** se habilita
-únicamente después de que Stripe confirme el primer contrato pagado. Antes de
-liberar ese primer pago, el músico debe completar directamente con Stripe los
-datos de identidad, fiscales y bancarios que correspondan a su tipo de cuenta.
+El registro inicial del músico no solicita RFC, CLABE ni documentación bancaria
+a Balam. Desde su perfil, la agrupación puede abrir **Completar datos en
+Stripe** antes de recibir su primer contrato. La API crea una cuenta Connect
+Express y un enlace de onboarding de un solo uso; Stripe recopila directamente
+los datos de identidad, fiscales y bancarios.
 
 Si el cliente califica antes de que la cuenta conectada esté lista, la
 dispersión queda pendiente; no se pierde ni se marca como pagada. Cuando Stripe
 confirma la cuenta, el sistema puede reintentar la transferencia. Balam debe
 mostrar solamente el estado y los últimos cuatro dígitos del destino, sin
 exponer RFC, CLABE completa ni documentos en el panel administrativo.
+
+Configura también `CONNECT_REFRESH_URL` y `CONNECT_RETURN_URL` con URLs HTTPS
+públicas del backend. En Stripe registra el webhook de plataforma y habilita
+eventos de cuentas conectadas para `account.updated`, `payout.paid` y
+`payout.failed`. `account.updated` habilita y reintenta transferencias que ya
+fueron autorizadas; los eventos de payout permiten mostrar si Stripe confirmó o
+rechazó el depósito bancario.
 
 ## Acceso con Google
 

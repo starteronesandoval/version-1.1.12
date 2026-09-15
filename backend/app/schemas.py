@@ -92,6 +92,7 @@ class ClientProfileResponse(ClientProfileUpsert):
     avatar_url: str | None = None
     avatar_preset: str = "jaguar_guitar"
     avatar_color: str = "#8B5CF6"
+    avatar_mode: str = "photo"
     profile_complete: bool = False
     admin_phone_saved: bool = False
 
@@ -110,8 +111,13 @@ class MusicianProfileUpsert(BaseModel):
     group_name: str = Field(min_length=2, max_length=180)
     group_type: str = Field(min_length=2, max_length=100)
     musical_style: str = Field(min_length=2, max_length=180)
+    card_theme: str = Field(
+        default="classic",
+        pattern=r"^(classic|norteno|mariachi|rock|banda|sonora|sierreno)$",
+    )
     member_count: int = Field(ge=1, le=100)
     hourly_rate: float = Field(ge=0)
+    minimum_booking_hours: int = Field(default=2, ge=1, le=12)
     includes_sound: bool = False
     subwoofer_count: int = Field(default=0, ge=0, le=100)
     mid_speaker_count: int = Field(default=0, ge=0, le=100)
@@ -134,6 +140,7 @@ class MusicianProfileResponse(MusicianProfileUpsert):
     media: list[MediaResponse] = Field(default_factory=list)
     avatar_preset: str = "jaguar_guitar"
     avatar_color: str = "#8B5CF6"
+    avatar_mode: str = "photo"
     rating: float | None = None
     review_count: int = 0
     profile_complete: bool = False
@@ -152,6 +159,15 @@ class PayoutDestinationResponse(BaseModel):
     last4: str | None = None
     updated_at: datetime | None = None
     stripe_connect_ready: bool = False
+    onboarding_status: str = "not_started"
+    requirements_due: list[str] = Field(default_factory=list)
+    last_payout_status: str | None = None
+    last_payout_error: str | None = None
+
+
+class StripeConnectOnboardingResponse(BaseModel):
+    url: str
+    expires_at: int | None = None
 
 
 class StripeConnectAccountUpdate(BaseModel):
@@ -220,6 +236,9 @@ class BookingResponse(BaseModel):
     review_score: float | None = None
     review_recommendation: str | None = None
     event_finished: bool
+    payout_release_deadline: datetime
+    can_release_payment: bool
+    can_dispute_payment: bool
     is_new_sale: bool = False
 
 

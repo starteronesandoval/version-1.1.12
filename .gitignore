@@ -4,6 +4,9 @@ __pycache__/
 .pytest_cache/
 backend/.venv/
 backend/.env
+.cloudflared/
+cloudflare/*.json
+cloudflare/*.pem
 backend/*.db
 backend/uploads/
 backend/test_uploads/

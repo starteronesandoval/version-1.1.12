@@ -60,29 +60,101 @@ class GlassCard extends StatelessWidget {
     required this.child,
     this.padding = const EdgeInsets.all(18),
     this.onTap,
+    this.theme = 'classic',
+    this.light = false,
   });
   final Widget child;
   final EdgeInsets padding;
   final VoidCallback? onTap;
+  final String theme;
+  final bool light;
 
   @override
   Widget build(BuildContext context) => ClipRRect(
     borderRadius: BorderRadius.circular(26),
-    child: BackdropFilter(
-      filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-      child: Material(
-        color: Colors.white.withValues(alpha: .10),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(26),
-          side: BorderSide(color: Colors.white.withValues(alpha: .18)),
+    child: Stack(
+      children: [
+        if (groupThemeAsset(theme) case final asset?)
+          Positioned.fill(child: Image.asset(asset, fit: BoxFit.cover)),
+        Positioned.fill(
+          child: ColoredBox(
+            color: (light ? Colors.white : const Color(0xFF071018)).withValues(
+              alpha: light ? .86 : (theme == 'classic' ? .42 : .20),
+            ),
+          ),
         ),
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(padding: padding, child: child),
+        BackdropFilter(
+          filter: ImageFilter.blur(
+            sigmaX: theme == 'classic' ? 16 : 3,
+            sigmaY: theme == 'classic' ? 16 : 3,
+          ),
+          child: Material(
+            color: Colors.white.withValues(
+              alpha: light ? .68 : (theme == 'classic' ? .07 : .03),
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(26),
+              side: BorderSide(
+                color: Colors.white.withValues(alpha: light ? 1 : .78),
+                width: 1.4,
+              ),
+            ),
+            child: InkWell(
+              onTap: onTap,
+              child: Padding(padding: padding, child: child),
+            ),
+          ),
         ),
-      ),
+      ],
     ),
   );
+}
+
+const groupThemeLabels = <String, String>{
+  'classic': 'Glass clásico',
+  'norteno': 'Norteño · acordeón y bajo quinto',
+  'mariachi': 'Mariachi · guitarrón y trompetas',
+  'rock': 'Rock · guitarras y escenario',
+  'banda': 'Banda · tuba y tambora',
+  'sonora': 'Sonora · metales y percusión tropical',
+  'sierreno': 'Sierreño · requinto, guitarra y bajo',
+};
+
+String? groupThemeAsset(String theme) =>
+    const {
+      'norteno': 'assets/themes/norteno.png',
+      'mariachi': 'assets/themes/mariachi.png',
+      'rock': 'assets/themes/rock.png',
+      'banda': 'assets/themes/banda.png',
+      'sonora': 'assets/themes/sonora.png',
+      'sierreno': 'assets/themes/sierreno.png',
+    }[theme];
+
+String resolveGroupTheme({
+  required String? selected,
+  String? groupType,
+  String? musicalStyle,
+}) {
+  if (selected != null &&
+      selected != 'classic' &&
+      groupThemeAsset(selected) != null) {
+    return selected;
+  }
+  final description = '${groupType ?? ''} ${musicalStyle ?? ''}'
+      .toLowerCase()
+      .replaceAll(RegExp('[áàä]'), 'a')
+      .replaceAll(RegExp('[éèë]'), 'e')
+      .replaceAll(RegExp('[íìï]'), 'i')
+      .replaceAll(RegExp('[óòö]'), 'o')
+      .replaceAll(RegExp('[úùü]'), 'u')
+      .replaceAll('ñ', 'n');
+  if (description.contains('mariachi')) return 'mariachi';
+  if (description.contains('sierreno')) return 'sierreno';
+  if (description.contains('sonora')) return 'sonora';
+  if (description.contains('banda')) return 'banda';
+  if (description.contains('norteno')) return 'norteno';
+  if (description.contains('rock')) return 'rock';
+  return 'classic';
 }
 
 class ProfileAvatar extends StatelessWidget {

@@ -3,10 +3,12 @@ import hmac
 import json
 import os
 import time as clock
-from datetime import date, time, timedelta
+import stripe
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
@@ -22,7 +24,7 @@ from fastapi.testclient import TestClient
 from app.auth import create_token
 from app.config import settings
 from app.database import Base, SessionLocal, engine
-from app.billing import release_musician_funds
+from app.billing import release_due_payouts, release_musician_funds
 from app.main import app, booking_price_snapshot
 from app.models import (Booking, ClientProfile, MusicianPayoutDestination,
                         MusicianProfile, User, UserRole)
@@ -169,6 +171,7 @@ def test_approved_release_creates_idempotent_connect_transfer():
             encrypted_number="encrypted-test-value",
             last4="9719",
             stripe_connected_account_id="acct_release_test",
+            stripe_payouts_enabled=True,
         ))
         db.commit()
         original_key = settings.stripe_secret_key
@@ -193,11 +196,83 @@ def test_approved_release_creates_idempotent_connect_transfer():
             settings.stripe_secret_key = original_key
 
 
+def test_auto_release_waits_two_hours_then_transfers_exactly_once():
+    _, booking_id = create_booking_fixture("-auto-release")
+    event_timezone = ZoneInfo(settings.event_timezone)
+    event_day = date(2035, 5, 20)
+    deadline = datetime(2035, 5, 20, 23, 0, tzinfo=event_timezone)
+    with SessionLocal() as db:
+        booking = db.get(Booking, booking_id)
+        booking.event_date = event_day
+        booking.end_time = time(21, 0)
+        booking.payment_status = "paid"
+        booking.payout_status = "musician_funds_held"
+        booking.stripe_payment_intent_id = "pi_auto_release"
+        db.add(MusicianPayoutDestination(
+            musician_id=booking.musician_id,
+            destination_type="clabe",
+            encrypted_number="encrypted-auto-release",
+            last4="9719",
+            stripe_connected_account_id="acct_auto_release",
+            stripe_payouts_enabled=True,
+        ))
+        db.commit()
+
+        assert release_due_payouts(
+            db, now=deadline - timedelta(seconds=1)
+        ) == 0
+        assert db.get(Booking, booking_id).payout_status == "musician_funds_held"
+
+        original_key = settings.stripe_secret_key
+        settings.stripe_secret_key = "sk_test_auto_release"
+        try:
+            with patch(
+                "app.billing.stripe.PaymentIntent.retrieve",
+                return_value=SimpleNamespace(latest_charge="ch_auto_release"),
+            ), patch(
+                "app.billing.stripe.Transfer.create",
+                return_value=SimpleNamespace(id="tr_auto_release"),
+            ) as transfer:
+                assert release_due_payouts(db, now=deadline) == 1
+                assert release_due_payouts(
+                    db, now=deadline + timedelta(minutes=5)
+                ) == 0
+            transfer.assert_called_once()
+            assert transfer.call_args.kwargs["destination"] == "acct_auto_release"
+            saved = db.get(Booking, booking_id)
+            assert saved.payout_status == "transferred"
+            assert saved.stripe_transfer_id == "tr_auto_release"
+            assert saved.approved_for_payout_at is not None
+        finally:
+            settings.stripe_secret_key = original_key
+
+
+def test_dispute_is_rejected_after_two_hour_window():
+    headers, booking_id = create_booking_fixture("-late-dispute")
+    with SessionLocal() as db:
+        booking = db.get(Booking, booking_id)
+        booking.event_date = date.today() - timedelta(days=1)
+        booking.payment_status = "paid"
+        booking.payout_status = "musician_funds_held"
+        db.commit()
+
+    response = client.post(
+        f"/api/bookings/{booking_id}/dispute",
+        headers=headers,
+        json={"reason": "El servicio no se completó como se acordó."},
+    )
+    assert response.status_code == 409
+    assert "plazo de 2 horas" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.get(Booking, booking_id).payout_status == "musician_funds_held"
+
+
 def test_money_flow_from_stripe_webhook_to_group_connect_account():
     client_headers, booking_id = create_booking_fixture("-money-flow")
     with SessionLocal() as db:
         booking = db.get(Booking, booking_id)
         booking.event_date = date.today() - timedelta(days=1)
+        booking.stripe_checkout_session_id = "cs_money_flow"
         musician = db.get(MusicianProfile, booking.musician_id)
         musician_user = db.get(User, musician.user_id)
         admin_user = User(
@@ -225,6 +300,7 @@ def test_money_flow_from_stripe_webhook_to_group_connect_account():
             "id": "evt_money_flow_paid",
             "type": "checkout.session.completed",
             "data": {"object": {
+                "id": "cs_money_flow",
                 "metadata": {"booking_id": str(booking_id)},
                 "payment_status": "paid",
                 "payment_intent": "pi_money_flow",
@@ -246,24 +322,51 @@ def test_money_flow_from_stripe_webhook_to_group_connect_account():
             assert paid_booking.payout_status == "musician_funds_held"
             assert paid_booking.stripe_payment_intent_id == "pi_money_flow"
 
-        destination = client.put(
-            "/api/musicians/me/payout-destination",
-            headers=musician_headers,
-            json={
-                "destination_type": "clabe",
-                "account_number": "032180000118359719",
+        created_account = SimpleNamespace(
+            id="acct_moneyflowgroup",
+            to_dict_recursive=lambda: {
+                "id": "acct_moneyflowgroup", "country": "MX",
+                "details_submitted": False, "payouts_enabled": False,
+                "metadata": {"balam_musician_id": str(musician_id)},
+                "requirements": {"currently_due": ["external_account"]},
             },
         )
-        assert destination.status_code == 200
-        assert destination.json()["last4"] == "9719"
+        with patch("app.billing.stripe.Account.create", return_value=created_account), \
+                patch(
+                    "app.billing.stripe.AccountLink.create",
+                    return_value=SimpleNamespace(
+                        url="https://connect.stripe.test/onboard", expires_at=12345,
+                    ),
+                ):
+            onboarding = client.post(
+                "/api/billing/connect/onboarding", headers=musician_headers, json={},
+            )
+        assert onboarding.status_code == 201
+        assert onboarding.json()["url"] == "https://connect.stripe.test/onboard"
 
-        connected = client.put(
-            f"/api/admin/musicians/{musician_id}/stripe-connect",
-            headers=admin_headers,
-            json={"account_id": "acct_moneyflowgroup"},
-        )
+        account_ready_event = {
+            "id": "evt_money_flow_account_ready", "type": "account.updated",
+            "data": {"object": {
+                "id": "acct_moneyflowgroup", "country": "MX",
+                "details_submitted": True, "payouts_enabled": True,
+                "metadata": {"balam_musician_id": str(musician_id)},
+                "requirements": {"currently_due": [], "past_due": []},
+            }},
+        }
+        with patch(
+            "app.billing.stripe.Webhook.construct_event",
+            return_value=account_ready_event,
+        ):
+            connected = client.post(
+                "/api/billing/webhooks/stripe", content=b"signed-account-event",
+                headers={"stripe-signature": "test-signature"},
+            )
         assert connected.status_code == 200
-        assert connected.json()["stripe_connect_ready"] is True
+        status = client.get(
+            "/api/musicians/me/payout-destination", headers=musician_headers,
+        )
+        assert status.json()["stripe_connect_ready"] is True
+        assert status.json()["onboarding_status"] == "ready"
 
         with patch(
             "app.billing.stripe.PaymentIntent.retrieve",
@@ -286,7 +389,18 @@ def test_money_flow_from_stripe_webhook_to_group_connect_account():
                     "recommendation": "Servicio completo y pago autorizado.",
                 },
             )
+            with SessionLocal() as db:
+                assert db.get(Booking, booking_id).payout_status == (
+                    "musician_funds_held"
+                )
+            released = client.post(
+                f"/api/bookings/{booking_id}/release",
+                headers=client_headers,
+                json={},
+            )
         assert review.status_code == 201
+        assert released.status_code == 200
+        assert released.json()["payout_status"] == "transferred"
         retrieve.assert_called_once_with("pi_money_flow")
         transfer.assert_called_once()
         transfer_args = transfer.call_args.kwargs
@@ -303,14 +417,14 @@ def test_money_flow_from_stripe_webhook_to_group_connect_account():
             transferred = db.get(Booking, booking_id)
             assert transferred.payout_status == "transferred"
             assert transferred.stripe_transfer_id == "tr_money_flow"
-            assert transferred.paid_out_at is not None
+            assert transferred.paid_out_at is None
             assert transferred.payout_error is None
     finally:
         settings.stripe_webhook_secret = original_webhook_secret
         settings.stripe_secret_key = original_stripe_key
 
 
-def test_payout_destination_unlocks_only_after_first_paid_contract():
+def test_connect_onboarding_is_available_before_first_paid_contract():
     with SessionLocal() as db:
         client_user = User(
             email="payout-client@example.com", password_hash="unused",
@@ -356,36 +470,71 @@ def test_payout_destination_unlocks_only_after_first_paid_contract():
         "/api/musicians/me/payout-destination", headers=musician_headers,
     )
     assert locked.status_code == 200
-    assert locked.json() == {
-        "eligible": False, "configured": False,
-        "stripe_connect_ready": False,
-    }
+    assert locked.json()["eligible"] is True
+    assert locked.json()["configured"] is False
+    assert locked.json()["onboarding_status"] == "not_started"
     assert client.put(
         "/api/musicians/me/payout-destination", headers=musician_headers,
         json={"destination_type": "clabe",
               "account_number": "032180000118359719"},
-    ).status_code == 403
+    ).status_code == 410
 
-    with SessionLocal() as db:
-        db.get(Booking, booking_id).payment_status = "paid"
-        db.commit()
-
-    saved = client.put(
-        "/api/musicians/me/payout-destination", headers=musician_headers,
-        json={"destination_type": "clabe",
-              "account_number": "032180000118359719"},
+    created_account = SimpleNamespace(
+        id="acct_early_setup",
+        to_dict_recursive=lambda: {
+            "id": "acct_early_setup", "details_submitted": False,
+            "payouts_enabled": False,
+            "metadata": {"balam_musician_id": str(musician_id)},
+            "requirements": {"currently_due": ["external_account"]},
+        },
     )
-    assert saved.status_code == 200
-    assert saved.json()["eligible"] is True
-    assert saved.json()["configured"] is True
-    assert saved.json()["last4"] == "9719"
-    assert "account_number" not in saved.json()
+    with patch("app.billing.stripe.Account.create", return_value=created_account), \
+            patch(
+                "app.billing.stripe.AccountLink.create",
+                return_value=SimpleNamespace(url="https://connect.test/setup", expires_at=1),
+            ):
+        saved = client.post(
+            "/api/billing/connect/onboarding", headers=musician_headers, json={},
+        )
+    assert saved.status_code == 201
+    with patch(
+        "app.billing.stripe.Account.retrieve",
+        side_effect=stripe.error.APIConnectionError("Stripe sin conexión"),
+    ):
+        unavailable = client.post(
+            "/api/billing/connect/onboarding", headers=musician_headers, json={},
+        )
+    assert unavailable.status_code == 502
+    assert unavailable.json()["detail"].startswith(
+        "No fue posible comunicarse con Stripe"
+    )
+    with patch(
+        "app.billing.stripe.Account.retrieve",
+        side_effect=stripe.error.InvalidRequestError(
+            "You can only create new accounts if you've signed up for Connect",
+            param=None,
+        ),
+    ):
+        connect_disabled = client.post(
+            "/api/billing/connect/onboarding", headers=musician_headers, json={},
+        )
+    assert connect_disabled.status_code == 502
+    assert connect_disabled.json()["detail"].startswith("Activa Stripe Connect")
     with SessionLocal() as db:
         destination = db.scalar(select(MusicianPayoutDestination).where(
             MusicianPayoutDestination.musician_id == musician_id
         ))
-        assert destination.encrypted_number != "032180000118359719"
-        db.get(Booking, booking_id).event_date = date.today() - timedelta(days=1)
+        assert destination.encrypted_number is None
+        assert destination.stripe_connected_account_id == "acct_early_setup"
+        recently_finished = datetime.now(
+            ZoneInfo(settings.event_timezone)
+        ) - timedelta(hours=1)
+        db.get(Booking, booking_id).event_date = recently_finished.date()
+        db.get(Booking, booking_id).end_time = recently_finished.time().replace(
+            tzinfo=None, microsecond=0
+        )
+        db.get(Booking, booking_id).payment_status = "paid"
+        db.get(Booking, booking_id).payout_status = "musician_funds_held"
         db.commit()
     disputed = client.post(
         f"/api/bookings/{booking_id}/dispute",
@@ -394,3 +543,61 @@ def test_payout_destination_unlocks_only_after_first_paid_contract():
     )
     assert disputed.status_code == 200
     assert disputed.json()["payout_status"] == "disputed"
+
+
+def test_connected_account_payout_webhooks_update_bank_deposit_status():
+    _, booking_id = create_booking_fixture("-bank-payout")
+    with SessionLocal() as db:
+        booking = db.get(Booking, booking_id)
+        destination = MusicianPayoutDestination(
+            musician_id=booking.musician_id,
+            stripe_connected_account_id="acct_bank_payout",
+            stripe_details_submitted=True,
+            stripe_payouts_enabled=True,
+        )
+        db.add(destination)
+        db.commit()
+        destination_id = destination.id
+
+    original_secret = settings.stripe_webhook_secret
+    settings.stripe_webhook_secret = "whsec_bank_payout"
+    try:
+        failed_event = {
+            "id": "evt_bank_payout_failed", "type": "payout.failed",
+            "account": "acct_bank_payout",
+            "data": {"object": {
+                "id": "po_bank_payout", "failure_code": "account_closed",
+            }},
+        }
+        with patch(
+            "app.billing.stripe.Webhook.construct_event", return_value=failed_event,
+        ):
+            response = client.post(
+                "/api/billing/webhooks/stripe", content=b"signed-payout-failed",
+                headers={"stripe-signature": "test-signature"},
+            )
+        assert response.status_code == 200
+        with SessionLocal() as db:
+            destination = db.get(MusicianPayoutDestination, destination_id)
+            assert destination.last_stripe_payout_status == "failed"
+            assert destination.last_stripe_payout_error == "account_closed"
+
+        paid_event = {
+            "id": "evt_bank_payout_paid", "type": "payout.paid",
+            "account": "acct_bank_payout",
+            "data": {"object": {"id": "po_bank_payout"}},
+        }
+        with patch(
+            "app.billing.stripe.Webhook.construct_event", return_value=paid_event,
+        ):
+            response = client.post(
+                "/api/billing/webhooks/stripe", content=b"signed-payout-paid",
+                headers={"stripe-signature": "test-signature"},
+            )
+        assert response.status_code == 200
+        with SessionLocal() as db:
+            destination = db.get(MusicianPayoutDestination, destination_id)
+            assert destination.last_stripe_payout_status == "paid"
+            assert destination.last_stripe_payout_error is None
+    finally:
+        settings.stripe_webhook_secret = original_secret

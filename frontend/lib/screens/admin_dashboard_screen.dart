@@ -317,13 +317,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         icon: const Icon(Icons.gavel_outlined),
                         label: const Text('Resolver y autorizar pago'),
                       ),
-                    if (item['payout_status'] == 'approved_for_payout')
-                      FilledButton.icon(
-                        onPressed:
-                            () => payoutAction(item['id'] as int, 'mark_paid'),
-                        icon: const Icon(Icons.account_balance_outlined),
-                        label: const Text('Confirmar depósito al músico'),
-                      ),
                     if (item['payout_status'] == 'transfer_failed')
                       FilledButton.tonalIcon(
                         onPressed:

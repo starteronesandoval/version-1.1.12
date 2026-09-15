@@ -1,9 +1,12 @@
+import json
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
 import stripe
-from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -11,13 +14,41 @@ from .auth import current_user
 from .config import settings
 from .database import get_db
 from .models import (BillingCustomer, Booking, MusicianPayoutDestination,
-                     StripeWebhookEvent, User)
+                     MusicianProfile, StripeWebhookEvent, User, UserRole)
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
 
 class CheckoutRequest(BaseModel):
     booking_id: int
+
+
+def connect_return_page(*, complete: bool) -> HTMLResponse:
+    title = "Cuenta enviada a revisión" if complete else "Continúa configurando tu cuenta"
+    message = (
+        "Stripe recibió tus datos. Balam actualizará el estado automáticamente."
+        if complete else
+        "El enlace venció o faltan datos. Vuelve a Balam para generar uno nuevo."
+    )
+    destination = "balam://connect/return" if complete else "balam://connect/refresh"
+    return HTMLResponse(f"""<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title}</title><style>
+body{{margin:0;background:#180d31;color:#fff;font-family:Arial,sans-serif;display:grid;place-items:center;min-height:100vh;text-align:center}}
+main{{padding:32px;max-width:460px}}h1{{font-size:30px}}p{{color:#d8cfeb;font-size:18px;line-height:1.5}}
+a{{display:block;margin-top:28px;padding:17px 24px;border-radius:30px;background:#cbb6ff;color:#251541;text-decoration:none;font-weight:700}}
+</style></head><body><main><h1>{title}</h1><p>{message}</p><a href="{destination}">Volver a Balam</a></main>
+<script>setTimeout(function(){{location.href='{destination}'}},700)</script></body></html>""")
+
+
+@router.get("/connect/return", response_class=HTMLResponse)
+def connect_return():
+    return connect_return_page(complete=True)
+
+
+@router.get("/connect/refresh", response_class=HTMLResponse)
+def connect_refresh():
+    return connect_return_page(complete=False)
 
 
 def checkout_return_page(*, paid: bool) -> HTMLResponse:
@@ -64,6 +95,107 @@ def stripe_client_ready() -> None:
     if not settings.stripe_secret_key:
         raise HTTPException(503, "Stripe Billing no está configurado")
     stripe.api_key = settings.stripe_secret_key
+
+
+def stripe_object_dict(value) -> dict:
+    if hasattr(value, "to_dict_recursive"):
+        return value.to_dict_recursive()
+    if hasattr(value, "to_dict"):
+        return value.to_dict()
+    return dict(value)
+
+
+def sync_connect_account(account, db: Session) -> MusicianPayoutDestination | None:
+    data = stripe_object_dict(account)
+    account_id = data.get("id")
+    metadata = data.get("metadata") or {}
+    raw_musician_id = metadata.get("balam_musician_id")
+    destination = None
+    if account_id:
+        destination = db.scalar(select(MusicianPayoutDestination).where(
+            MusicianPayoutDestination.stripe_connected_account_id == account_id
+        ))
+    if destination is None and raw_musician_id and str(raw_musician_id).isdigit():
+        destination = db.scalar(select(MusicianPayoutDestination).where(
+            MusicianPayoutDestination.musician_id == int(raw_musician_id)
+        ))
+    if destination is None:
+        return None
+    requirements = data.get("requirements") or {}
+    due = sorted(set(
+        (requirements.get("currently_due") or [])
+        + (requirements.get("past_due") or [])
+    ))
+    destination.stripe_details_submitted = bool(data.get("details_submitted"))
+    destination.stripe_payouts_enabled = bool(data.get("payouts_enabled"))
+    destination.stripe_requirements_due = json.dumps(due, separators=(",", ":"))
+    return destination
+
+
+@router.post("/connect/onboarding", status_code=201)
+def create_connect_onboarding(
+    user: User = Depends(current_user), db: Session = Depends(get_db),
+):
+    if user.role != UserRole.musician:
+        raise HTTPException(403, "Sólo las agrupaciones pueden configurar depósitos")
+    profile = db.scalar(select(MusicianProfile).where(MusicianProfile.user_id == user.id))
+    if not profile:
+        raise HTTPException(409, "Crea primero el perfil de la agrupación")
+    stripe_client_ready()
+    destination = db.scalar(select(MusicianPayoutDestination).where(
+        MusicianPayoutDestination.musician_id == profile.id
+    ))
+    if destination is None:
+        destination = MusicianPayoutDestination(musician_id=profile.id)
+        db.add(destination)
+        db.flush()
+    try:
+        if not destination.stripe_connected_account_id:
+            account = stripe.Account.create(
+                type="express",
+                country="MX",
+                email=user.email,
+                capabilities={"transfers": {"requested": True}},
+                metadata={
+                    "balam_musician_id": str(profile.id),
+                    "balam_user_id": str(user.id),
+                },
+                idempotency_key=f"balam-musician-{profile.id}-connect-v1",
+            )
+            destination.stripe_connected_account_id = account.id
+            sync_connect_account(account, db)
+            db.commit()
+        else:
+            account = stripe.Account.retrieve(destination.stripe_connected_account_id)
+            account_data = stripe_object_dict(account)
+            metadata = account_data.get("metadata") or {}
+            if metadata.get("balam_musician_id") != str(profile.id):
+                raise HTTPException(
+                    409,
+                    "La cuenta Stripe vinculada no pertenece a esta agrupación",
+                )
+            sync_connect_account(account, db)
+            db.commit()
+        link = stripe.AccountLink.create(
+            account=destination.stripe_connected_account_id,
+            refresh_url=settings.connect_refresh_url,
+            return_url=settings.connect_return_url,
+            type="account_onboarding",
+            collect="eventually_due",
+        )
+    except stripe.error.StripeError as exc:
+        db.rollback()
+        detail = (
+            "Activa Stripe Connect en el Dashboard de Stripe antes de "
+            "registrar cuentas bancarias de agrupaciones."
+            if "signed up for Connect" in str(exc)
+            else "No fue posible comunicarse con Stripe. Intenta nuevamente en unos momentos."
+        )
+        raise HTTPException(
+            502,
+            detail,
+        ) from exc
+    return {"url": link.url, "expires_at": getattr(link, "expires_at", None)}
 
 
 def customer_for(user: User, db: Session) -> BillingCustomer:
@@ -191,6 +323,9 @@ def sync_checkout(event_type: str, obj, db: Session) -> None:
     booking = db.get(Booking, int(raw_booking_id))
     if not booking:
         return
+    session_id = obj.get("id")
+    if not session_id or booking.stripe_checkout_session_id != session_id:
+        return
     if event_type in {"checkout.session.completed", "checkout.session.async_payment_succeeded"}:
         if obj.get("payment_status") in {"paid", "no_payment_required"}:
             booking.payment_status = "paid"
@@ -215,9 +350,10 @@ def release_musician_funds(booking_id: int, db: Session) -> bool:
     destination = db.scalar(select(MusicianPayoutDestination).where(
         MusicianPayoutDestination.musician_id == booking.musician_id
     ))
-    if not destination or not destination.stripe_connected_account_id:
+    if (not destination or not destination.stripe_connected_account_id
+            or not destination.stripe_payouts_enabled):
         booking.payout_status = "pending_connect_account"
-        booking.payout_error = "Falta vincular la cuenta Stripe Connect"
+        booking.payout_error = "La cuenta Stripe Connect aún no está habilitada para depósitos"
         db.commit()
         return False
     if not booking.stripe_payment_intent_id:
@@ -225,8 +361,10 @@ def release_musician_funds(booking_id: int, db: Session) -> bool:
         booking.payout_error = "El cobro no tiene PaymentIntent de Stripe"
         db.commit()
         return False
-    stripe_client_ready()
+
+
     try:
+        stripe_client_ready()
         payment_intent = stripe.PaymentIntent.retrieve(
             booking.stripe_payment_intent_id
         )
@@ -250,11 +388,10 @@ def release_musician_funds(booking_id: int, db: Session) -> bool:
         )
         booking.stripe_transfer_id = transfer.id
         booking.payout_status = "transferred"
-        booking.paid_out_at = datetime.now(timezone.utc).replace(tzinfo=None)
         booking.payout_error = None
         db.commit()
         return True
-    except (stripe.error.StripeError, ValueError) as error:
+    except (stripe.error.StripeError, ValueError, HTTPException) as error:
         db.rollback()
         booking = db.get(Booking, booking_id)
         booking.payout_status = "transfer_failed"
@@ -263,14 +400,65 @@ def release_musician_funds(booking_id: int, db: Session) -> bool:
         return False
 
 
+def payout_release_deadline(booking: Booking) -> datetime:
+    """Moment when the client's review/dispute window closes."""
+    event_timezone = ZoneInfo(settings.event_timezone)
+    event_ends_at = datetime.combine(
+        booking.event_date, booking.end_time, tzinfo=event_timezone
+    )
+    return event_ends_at + timedelta(hours=settings.payout_auto_release_hours)
+
+
+def release_due_payouts(db: Session, *, now: datetime | None = None) -> int:
+    """Authorize and transfer every undisputed payment whose window has expired."""
+    event_timezone = ZoneInfo(settings.event_timezone)
+    current_time = now or datetime.now(event_timezone)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=event_timezone)
+    else:
+        current_time = current_time.astimezone(event_timezone)
+
+    candidate_ids = list(db.scalars(select(Booking.id).where(
+        Booking.payment_status == "paid",
+        Booking.payout_status == "musician_funds_held",
+    )))
+    released = 0
+    approved_at = current_time.astimezone(timezone.utc).replace(tzinfo=None)
+    for booking_id in candidate_ids:
+        booking = db.get(Booking, booking_id)
+        if not booking or current_time < payout_release_deadline(booking):
+            continue
+        result = db.execute(
+            update(Booking)
+            .where(
+                Booking.id == booking_id,
+                Booking.payment_status == "paid",
+                Booking.payout_status == "musician_funds_held",
+            )
+            .values(
+                payout_status="approved_for_payout",
+                approved_for_payout_at=approved_at,
+            )
+        )
+        db.commit()
+        if result.rowcount == 1:
+            release_musician_funds(booking_id, db)
+            released += 1
+    return released
+
+
 @router.post("/webhooks/stripe", include_in_schema=False)
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     if not settings.stripe_webhook_secret:
         raise HTTPException(503, "Webhook de Stripe no configurado")
-    payload = await request.body()
+    payload = bytearray()
+    async for chunk in request.stream():
+        payload.extend(chunk)
+        if len(payload) > settings.max_stripe_webhook_bytes:
+            raise HTTPException(413, "Webhook demasiado grande")
     try:
         event = stripe.Webhook.construct_event(
-            payload, request.headers.get("stripe-signature", ""), settings.stripe_webhook_secret
+            bytes(payload), request.headers.get("stripe-signature", ""), settings.stripe_webhook_secret
         )
     except (ValueError, stripe.error.SignatureVerificationError):
         raise HTTPException(400, "Firma de webhook inválida")
@@ -285,7 +473,41 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         db.rollback()
         return {"received": True, "duplicate": True}
 
-    if event["type"].startswith("checkout.session."):
+    event_type = event["type"]
+    if event_type.startswith("checkout.session."):
         sync_checkout(event["type"], event["data"]["object"], db)
+    elif event_type == "account.updated":
+        destination = sync_connect_account(event["data"]["object"], db)
+        db.flush()
+        if destination and destination.stripe_payouts_enabled:
+            pending_ids = list(db.scalars(select(Booking.id).where(
+                Booking.musician_id == destination.musician_id,
+                Booking.payout_status == "pending_connect_account",
+                Booking.approved_for_payout_at.is_not(None),
+            )).all())
+            db.commit()
+            for booking_id in pending_ids:
+                pending = db.get(Booking, booking_id)
+                pending.payout_status = "approved_for_payout"
+                pending.payout_error = None
+                db.commit()
+                release_musician_funds(booking_id, db)
+            return {"received": True, "retried_transfers": len(pending_ids)}
+    elif event_type in {"payout.paid", "payout.failed"}:
+        payout = stripe_object_dict(event["data"]["object"])
+        connected_account_id = event.get("account")
+        destination = db.scalar(select(MusicianPayoutDestination).where(
+            MusicianPayoutDestination.stripe_connected_account_id == connected_account_id
+        ))
+        if destination:
+            destination.last_stripe_payout_id = payout.get("id")
+            destination.last_stripe_payout_status = (
+                "paid" if event_type == "payout.paid" else "failed"
+            )
+            destination.last_stripe_payout_error = (
+                None if event_type == "payout.paid" else
+                (payout.get("failure_message") or payout.get("failure_code") or
+                 "Stripe no pudo completar el depósito bancario")
+            )
     db.commit()
     return {"received": True}

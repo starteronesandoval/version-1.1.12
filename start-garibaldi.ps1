@@ -36,10 +36,22 @@ if (-not (Test-Path -LiteralPath $backendPython)) {
 }
 
 if (-not (Test-BackendHealth)) {
+    Write-Host 'Aplicando migraciones de base de datos...'
+    Push-Location $backendRoot
+    try {
+        & $backendPython -m alembic upgrade head
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Alembic no pudo actualizar la base de datos.'
+        }
+    }
+    finally {
+        Pop-Location
+    }
+
     Write-Host 'Iniciando backend de Garibaldi...'
     Start-Process `
         -FilePath $backendPython `
-        -ArgumentList '-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', '8000' `
+        -ArgumentList '-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', '8000', '--proxy-headers', '--forwarded-allow-ips', '127.0.0.1' `
         -WorkingDirectory $backendRoot `
         -RedirectStandardOutput $backendLog `
         -RedirectStandardError $backendErrorLog `
@@ -69,20 +81,22 @@ if (-not (Test-Path -LiteralPath $adb)) {
 }
 
 $devices = & $adb devices
-$physicalDevice = $devices |
-    Select-String -Pattern '^(?!emulator-)\S+\s+device$' |
+$androidDevice = $devices |
+    Select-String -Pattern '^\S+\s+device$' |
+    Sort-Object { if ($_.Line -match '^emulator-') { 1 } else { 0 } } |
     Select-Object -First 1
-if (-not $physicalDevice) {
-    Write-Warning 'Backend listo. Abre Garibaldi manualmente en tu telefono.'
-    Write-Warning 'El emulador no se iniciara porque QEMU es inestable en esta PC.'
+if (-not $androidDevice) {
+    Write-Warning 'Backend listo. Abre Garibaldi manualmente cuando conectes un telefono o enciendas el emulador.'
+    Write-Warning 'El lanzador no inicia emuladores porque QEMU es inestable en esta PC.'
     exit 0
 }
 
-$deviceSerial = ($physicalDevice.Line -split '\s+')[0]
-Write-Host "Abriendo Garibaldi en el telefono $deviceSerial..."
+$deviceSerial = ($androidDevice.Line -split '\s+')[0]
+$deviceKind = if ($deviceSerial -match '^emulator-') { 'emulador' } else { 'telefono' }
+Write-Host "Abriendo Garibaldi en el $deviceKind $deviceSerial..."
 & $adb -s $deviceSerial shell monkey -p mx.balam.app -c android.intent.category.LAUNCHER 1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
-    Write-Error 'El backend esta activo, pero ADB no pudo abrir la app en el telefono.'
+    Write-Error "El backend esta activo, pero ADB no pudo abrir la app en el $deviceKind."
     exit 1
 }
 

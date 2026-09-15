@@ -30,6 +30,7 @@ class User(Base):
     )
     role: Mapped[UserRole] = mapped_column(Enum(UserRole))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    token_version: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     musician_profile: Mapped["MusicianProfile | None"] = relationship(back_populates="user", cascade="all, delete-orphan")
     client_profile: Mapped["ClientProfile | None"] = relationship(back_populates="user", cascade="all, delete-orphan")
@@ -103,6 +104,7 @@ class AvatarChoice(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
     preset: Mapped[str] = mapped_column(String(40), default="jaguar_guitar")
     color: Mapped[str] = mapped_column(String(9), default="#8B5CF6")
+    mode: Mapped[str] = mapped_column(String(12), default="photo")
     user: Mapped[User] = relationship(back_populates="avatar_choice")
 
 
@@ -118,8 +120,10 @@ class MusicianProfile(Base):
     group_name: Mapped[str] = mapped_column(String(180), index=True)
     group_type: Mapped[str] = mapped_column(String(100), index=True)
     musical_style: Mapped[str] = mapped_column(String(180), index=True)
+    card_theme: Mapped[str] = mapped_column(String(30), default="classic")
     member_count: Mapped[int] = mapped_column(Integer)
     hourly_rate: Mapped[float] = mapped_column(Numeric(12, 2))
+    minimum_booking_hours: Mapped[int] = mapped_column(Integer, default=2)
     includes_sound: Mapped[bool] = mapped_column(Boolean, default=False)
     subwoofer_count: Mapped[int] = mapped_column(Integer, default=0)
     mid_speaker_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -148,12 +152,18 @@ class MusicianPayoutDestination(Base):
     musician_id: Mapped[int] = mapped_column(
         ForeignKey("musician_profiles.id"), unique=True, index=True
     )
-    destination_type: Mapped[str] = mapped_column(String(20))
-    encrypted_number: Mapped[str] = mapped_column(Text)
-    last4: Mapped[str] = mapped_column(String(4))
+    destination_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    encrypted_number: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
     stripe_connected_account_id: Mapped[str | None] = mapped_column(
         String(255), unique=True, index=True, nullable=True
     )
+    stripe_details_submitted: Mapped[bool] = mapped_column(Boolean, default=False)
+    stripe_payouts_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    stripe_requirements_due: Mapped[str] = mapped_column(Text, default="")
+    last_stripe_payout_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_stripe_payout_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    last_stripe_payout_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),

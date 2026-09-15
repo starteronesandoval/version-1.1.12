@@ -3,10 +3,12 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../api_service.dart';
 import '../widgets/booking_chat_sheet.dart';
 import '../widgets/glass_ui.dart';
+import '../widgets/network_video_player.dart';
 import 'group_rules_screen.dart';
 import 'rhythm_game_screen.dart';
 
@@ -37,6 +39,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
       'musical_style',
       'member_count',
       'hourly_rate',
+      'minimum_booking_hours',
       'subwoofer_count',
       'mid_speaker_count',
       'equipment_brands',
@@ -47,6 +50,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
   };
   Map<String, dynamic>? profile;
   bool sound = false;
+  String cardTheme = 'classic';
   bool busy = false;
   bool loading = true;
   bool editing = false;
@@ -143,6 +147,33 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
     payoutDestination =
         await widget.api.get('/api/musicians/me/payout-destination')
             as Map<String, dynamic>;
+  }
+
+  Future<void> _startStripeOnboarding() async {
+    try {
+      final response =
+          await widget.api.post('/api/billing/connect/onboarding', {})
+              as Map<String, dynamic>;
+      final opened = await launchUrl(
+        Uri.parse(response['url'] as String),
+        mode: LaunchMode.externalApplication,
+      );
+      if (!opened) throw const FormatException();
+    } on ApiException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No se pudo abrir el registro seguro de Stripe.'),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _editPayoutDestination() async {
@@ -471,11 +502,13 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
           value is List ? value.join(', ') : value?.toString() ?? '';
     }
     sound = data['includes_sound'] as bool? ?? false;
+    cardTheme = data['card_theme']?.toString() ?? 'classic';
   }
 
   bool numeric(String key) => const {
     'member_count',
     'hourly_rate',
+    'minimum_booking_hours',
     'subwoofer_count',
     'mid_speaker_count',
     'audience_capacity',
@@ -493,6 +526,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
         'musical_style': 'Corriente musical',
         'member_count': 'Cantidad de integrantes',
         'hourly_rate': 'Costo por hora',
+        'minimum_booking_hours': 'Contrato mínimo (horas)',
         'subwoofer_count': 'Subwoofers',
         'mid_speaker_count': 'Bocinas de medios',
         'equipment_brands': 'Marcas (separadas por coma)',
@@ -518,6 +552,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
                             ? entry.value.text.split(',')
                             : entry.value.text,
                 'includes_sound': sound,
+                'card_theme': cardTheme,
               })
               as Map<String, dynamic>;
       profile = saved;
@@ -712,13 +747,21 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
       padding: const EdgeInsets.fromLTRB(18, 12, 18, 32),
       children: [
         GlassCard(
+          theme: resolveGroupTheme(
+            selected: data['card_theme']?.toString(),
+            groupType: data['group_type']?.toString(),
+            musicalStyle: data['musical_style']?.toString(),
+          ),
           child: Column(
             children: [
               Stack(
                 clipBehavior: Clip.none,
                 children: [
                   ProfileAvatar(
-                    url: widget.api.mediaUrl(avatar?['url']),
+                    url:
+                        data['avatar_mode'] == 'preset'
+                            ? null
+                            : widget.api.mediaUrl(avatar?['url']),
                     fallback: data['group_name'],
                     preset: data['avatar_preset'] ?? 'jaguar_guitar',
                     color: data['avatar_color'] ?? '#8B5CF6',
@@ -839,6 +882,12 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
                   Expanded(
                     child: _stat('\$${data['hourly_rate']}', 'Por hora'),
                   ),
+                  Expanded(
+                    child: _stat(
+                      '${data['minimum_booking_hours']} horas',
+                      'Contrato mínimo',
+                    ),
+                  ),
                 ],
               ),
             ],
@@ -870,29 +919,57 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  payoutDestination?['configured'] == true
-                      ? '${payoutDestination?['destination_type'] == 'clabe' ? 'CLABE' : 'Tarjeta de débito'} terminada en •••• ${payoutDestination?['last4']}'
-                      : 'Tu primer contrato ya fue pagado. Registra dónde deseas recibir tus depósitos.',
+                  switch (payoutDestination?['onboarding_status']) {
+                    'ready' =>
+                      'Cuenta verificada. Recibirás tus depósitos mediante Stripe.',
+                    'pending_verification' =>
+                      'Stripe está verificando tus datos.',
+                    'incomplete' =>
+                      'Faltan datos para habilitar tus depósitos.',
+                    _ =>
+                      'Configura ahora tu cuenta para recibir automáticamente tus ganancias.',
+                  },
                   style: TextStyle(
                     color:
-                        payoutDestination?['configured'] == true
+                        payoutDestination?['stripe_connect_ready'] == true
                             ? const Color(0xFF68DDCD)
                             : const Color(0xFFFFC857),
                   ),
                 ),
+                if (payoutDestination?['last_payout_status'] == 'paid') ...[
+                  const SizedBox(height: 8),
+                  const Text('Stripe confirmó el último depósito bancario.'),
+                ],
+                if (payoutDestination?['last_payout_status'] == 'failed') ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    payoutDestination?['last_payout_error']?.toString() ??
+                        'El último depósito falló. Actualiza tus datos en Stripe.',
+                    style: const TextStyle(color: Color(0xFFFF8A80)),
+                  ),
+                ],
                 const SizedBox(height: 12),
                 FilledButton.tonalIcon(
-                  onPressed: _editPayoutDestination,
+                  onPressed: _startStripeOnboarding,
                   icon: Icon(
-                    payoutDestination?['configured'] == true
+                    payoutDestination?['stripe_connect_ready'] == true
                         ? Icons.edit_outlined
-                        : Icons.add_card_outlined,
+                        : Icons.open_in_browser_outlined,
                   ),
                   label: Text(
-                    payoutDestination?['configured'] == true
-                        ? 'Cambiar cuenta'
-                        : 'Registrar cuenta',
+                    payoutDestination?['stripe_connect_ready'] == true
+                        ? 'Administrar datos en Stripe'
+                        : 'Completar datos en Stripe',
                   ),
+                ),
+                const SizedBox(height: 8),
+                TextButton.icon(
+                  onPressed: () async {
+                    await _loadPayoutDestination();
+                    if (mounted) setState(() {});
+                  },
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Actualizar estado'),
                 ),
               ],
             ),
@@ -1116,19 +1193,13 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
               Icons.smart_display_outlined,
               'Comparte una presentación en vivo',
             )
-            : Wrap(
-              spacing: 10,
+            : Column(
               children: [
                 for (var index = 0; index < videos.length; index++)
-                  GlassCard(
-                    padding: const EdgeInsets.all(14),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.play_circle_fill),
-                        SizedBox(width: 8),
-                        Text('Video en vivo'),
-                      ],
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 14),
+                    child: NetworkVideoPlayer(
+                      url: widget.api.mediaUrl(videos[index]['url'])!,
                     ),
                   ),
               ],
@@ -1355,6 +1426,88 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
                               : null,
                 ),
                 const SizedBox(height: 13),
+                if (entry.key == 'group_type') ...[
+                  const Text(
+                    'Tema visual de tu agrupación',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Elige el ambiente que acompañará tu género en las tarjetas.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withValues(alpha: .65),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  for (final theme in groupThemeLabels.entries)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 9),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(16),
+                        onTap: () => setState(() => cardTheme = theme.key),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 180),
+                          height: 82,
+                          decoration: BoxDecoration(
+                            image:
+                                groupThemeAsset(theme.key) == null
+                                    ? null
+                                    : DecorationImage(
+                                      image: AssetImage(
+                                        groupThemeAsset(theme.key)!,
+                                      ),
+                                      fit: BoxFit.cover,
+                                      colorFilter: const ColorFilter.mode(
+                                        Color(0x99160D2D),
+                                        BlendMode.srcOver,
+                                      ),
+                                    ),
+                            gradient:
+                                groupThemeAsset(theme.key) == null
+                                    ? const LinearGradient(
+                                      colors: [
+                                        Color(0xFF182632),
+                                        Color(0xFF315666),
+                                      ],
+                                    )
+                                    : null,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color:
+                                  cardTheme == theme.key
+                                      ? Colors.white
+                                      : Colors.white.withValues(alpha: .18),
+                              width: cardTheme == theme.key ? 2 : 1,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              const SizedBox(width: 14),
+                              Icon(
+                                cardTheme == theme.key
+                                    ? Icons.check_circle_rounded
+                                    : Icons.circle_outlined,
+                                color: const Color(0xFF68DDCD),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  theme.value,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    shadows: [Shadow(blurRadius: 8)],
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 4),
+                ],
               ],
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,

@@ -10,9 +10,11 @@ class Settings(BaseSettings):
     app_env: Literal["development", "test", "staging", "production"] = "development"
     database_url: str = "sqlite:///./balam.db"
     secret_key: str = "development-only-secret-key-change-me"
-    access_token_minutes: int = 60 * 24 * 7
+    access_token_minutes: int = Field(default=60, ge=5, le=10080)
     upload_dir: Path = Path("uploads")
     event_timezone: str = "America/Mexico_City"
+    payout_auto_release_hours: int = Field(default=2, ge=1, le=72)
+    payout_release_scan_seconds: int = Field(default=60, ge=10, le=3600)
     stripe_secret_key: str | None = None
     stripe_webhook_secret: str | None = None
     billing_success_url: str = (
@@ -20,6 +22,8 @@ class Settings(BaseSettings):
         "?session_id={CHECKOUT_SESSION_ID}"
     )
     billing_cancel_url: str = "http://10.0.2.2:8000/api/billing/checkout/cancel"
+    connect_refresh_url: str = "http://10.0.2.2:8000/api/billing/connect/refresh"
+    connect_return_url: str = "http://10.0.2.2:8000/api/billing/connect/return"
     cors_origins: Annotated[list[str], NoDecode] = [
         "http://localhost:3000", "http://localhost:8080"
     ]
@@ -48,6 +52,11 @@ class Settings(BaseSettings):
     expose_password_reset_code: bool = False
     max_image_bytes: int = 8 * 1024 * 1024
     max_video_bytes: int = 100 * 1024 * 1024
+    max_request_body_bytes: int = Field(default=2 * 1024 * 1024, ge=1024)
+    max_stripe_webhook_bytes: int = Field(default=1024 * 1024, ge=1024)
+    trust_cloudflare_headers: bool = False
+    auth_rate_limit_per_minute: int = Field(default=10, ge=1, le=1000)
+    password_reset_rate_limit_per_hour: int = Field(default=5, ge=1, le=100)
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
@@ -63,6 +72,10 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_production(self):
         if self.app_env in {"staging", "production"}:
+            if self.access_token_minutes > 1440:
+                raise ValueError(
+                    "ACCESS_TOKEN_MINUTES no puede superar 1440 fuera de desarrollo"
+                )
             if not self.database_url.startswith(("postgresql://", "postgresql+psycopg://")):
                 raise ValueError("DATABASE_URL debe usar PostgreSQL fuera de desarrollo")
             if self.database_ssl_mode in {"verify-ca", "verify-full"}:
@@ -93,6 +106,10 @@ class Settings(BaseSettings):
                 raise ValueError("BILLING_SUCCESS_URL debe usar HTTPS")
             if not self.billing_cancel_url.startswith("https://"):
                 raise ValueError("BILLING_CANCEL_URL debe usar HTTPS")
+            if not self.connect_refresh_url.startswith("https://"):
+                raise ValueError("CONNECT_REFRESH_URL debe usar HTTPS")
+            if not self.connect_return_url.startswith("https://"):
+                raise ValueError("CONNECT_RETURN_URL debe usar HTTPS")
         return self
 
 
