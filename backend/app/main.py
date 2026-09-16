@@ -905,7 +905,9 @@ def admin_groups(
         "deposit_account": (
             payout_cipher().decrypt(
                 profile.payout_destination.encrypted_number.encode("ascii")
-            ).decode("ascii") if profile.payout_destination else None
+            ).decode("ascii")
+            if profile.payout_destination and profile.payout_destination.encrypted_number
+            else None
         ),
         "stripe_connected_account_id": (
             profile.payout_destination.stripe_connected_account_id

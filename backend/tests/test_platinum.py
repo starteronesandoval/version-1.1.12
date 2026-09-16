@@ -11,7 +11,7 @@ from sqlalchemy import select
 from app.auth import create_token
 from app.database import Base, SessionLocal, engine
 from app.main import app
-from app.models import User, UserRole, MusicianProfile, PlatinumAudit, PlatinumRequest
+from app.models import User, UserRole, MusicianProfile, MusicianPayoutDestination, PlatinumAudit, PlatinumRequest
 
 client = TestClient(app)
 
@@ -72,6 +72,29 @@ def test_only_designated_administrator_can_certify_and_revoke():
     history = client.get(url + '/history', headers=headers[0]).json()
     assert [record['action'] for record in history] == ['revoked', 'issued']
     assert history[1]['details']['recommendation'] == payload()['recommendation'].strip()
+
+
+def test_admin_panel_accepts_connect_accounts_without_stored_bank_number():
+    headers, group_id = fixture()
+    with SessionLocal() as db:
+        db.add(MusicianPayoutDestination(musician_id=group_id,
+            stripe_connected_account_id='acct_connect_only', encrypted_number=None))
+        db.commit()
+    for path in ['/api/admin/clients', '/api/admin/groups', '/api/admin/bookings']:
+        response = client.get(path, headers=headers[0])
+        assert response.status_code == 200
+        assert isinstance(response.json(), list)
+    group = client.get('/api/admin/groups', headers=headers[0]).json()[0]
+    assert group['deposit_account'] is None
+    assert group['stripe_connected_account_id'] == 'acct_connect_only'
+    assert group['can_manage_platinum'] is True
+    # Legacy accounts that actually store an encrypted number remain readable.
+    from app.main import payout_cipher
+    with SessionLocal() as db:
+        destination = db.scalar(select(MusicianPayoutDestination))
+        destination.encrypted_number = payout_cipher().encrypt(b'012345678901234567').decode('ascii')
+        db.commit()
+    assert client.get('/api/admin/groups', headers=headers[0]).json()[0]['deposit_account'] == '012345678901234567'
 
 
 def test_requires_substantial_recommendation_confirmation_and_real_date():
