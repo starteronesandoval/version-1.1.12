@@ -45,6 +45,7 @@ from .billing import (
 from .config import settings
 from .database import SessionLocal, get_db
 from .social import router as social_router
+from .platinum import router as platinum_router, public_certificate, can_manage_platinum
 from .models import (AvatarChoice, Booking, BookingReview, ChatMessage, ClientAvatar,
                      ClientProfile, Media, MediaType, MusicianBusyDate,
                      MusicianProfile, MusicianPayoutDestination, PasswordResetCode, RulesAcceptance,
@@ -80,6 +81,7 @@ CLIENT_PLATFORM_FEE_RATE = Decimal("0.03")
 MUSICIAN_NET_RATE = Decimal("0.97")
 app.include_router(billing_router)
 app.include_router(social_router)
+app.include_router(platinum_router)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 app.add_middleware(
     CORSMiddleware,
@@ -383,6 +385,7 @@ def client_profiles():
 def musician_profiles():
     return select(MusicianProfile).options(
         selectinload(MusicianProfile.media),
+        selectinload(MusicianProfile.platinum_certificate),
         selectinload(MusicianProfile.user).selectinload(User.avatar_choice),
         selectinload(MusicianProfile.reviews),
         selectinload(MusicianProfile.payout_destination),
@@ -447,6 +450,7 @@ def musician_out(
         subwoofer_count=profile.subwoofer_count, mid_speaker_count=profile.mid_speaker_count,
         equipment_brands=values(profile.equipment_brands), audience_capacity=profile.audience_capacity,
         description=profile.description, media=profile.media,
+        platinum_certificate=public_certificate(profile),
         avatar_preset=choice.preset if choice else "jaguar_guitar",
         avatar_color=choice.color if choice else "#8B5CF6",
         avatar_mode=choice.mode if choice else "photo",
@@ -888,6 +892,7 @@ def admin_groups(
     profiles = db.scalars(musician_profiles().order_by(MusicianProfile.id.desc())).all()
     return [{
         **musician_out(profile).model_dump(),
+        "can_manage_platinum": can_manage_platinum(user),
         "account_email": None if profile.user.phone else profile.user.email,
         "account_phone": profile.user.phone,
         "admin_phone": profile.admin_phone,

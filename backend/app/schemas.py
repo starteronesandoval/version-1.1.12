@@ -134,6 +134,15 @@ class MediaResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PlatinumResponse(BaseModel):
+    certificate_code: str
+    group_name: str
+    recommendation: str
+    verification_method: str
+    verified_on: date
+    issued_at: datetime
+
+
 class MusicianProfileResponse(MusicianProfileUpsert):
     id: int
     user_id: int
@@ -143,6 +152,7 @@ class MusicianProfileResponse(MusicianProfileUpsert):
     avatar_mode: str = "photo"
     rating: float | None = None
     review_count: int = 0
+    platinum_certificate: PlatinumResponse | None = None
     profile_complete: bool = False
     admin_phone_saved: bool = False
 

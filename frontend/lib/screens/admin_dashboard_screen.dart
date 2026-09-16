@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api_service.dart';
 import '../widgets/booking_chat_sheet.dart';
 import '../widgets/glass_ui.dart';
+import '../widgets/platinum_certificate.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({
@@ -162,6 +163,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       'admin_phone_saved',
       'rules_acceptances',
       'user_id',
+      'platinum_certificate',
+      'can_manage_platinum',
     };
     final entries = item.entries.where((entry) => !omitted.contains(entry.key));
     final rules = item['rules_acceptances'] as List<dynamic>? ?? [];
@@ -203,6 +206,26 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               ),
           ],
           if (item['group_name'] != null) ...[
+            PlatinumBadge(api: widget.api, group: item),
+            if (item['can_manage_platinum'] == true)
+              FilledButton.tonalIcon(
+                onPressed: () async {
+                  final changed = await Navigator.of(context).push<bool>(
+                    MaterialPageRoute(
+                      builder:
+                          (_) =>
+                              PlatinumEditorPage(api: widget.api, group: item),
+                    ),
+                  );
+                  if (changed == true && mounted) await load();
+                },
+                icon: const Icon(Icons.workspace_premium_rounded),
+                label: Text(
+                  item['platinum_certificate'] == null
+                      ? 'Certificar Platino'
+                      : 'Gestionar Platino',
+                ),
+              ),
             const SizedBox(height: 10),
             FilledButton.tonalIcon(
               onPressed: () => linkStripeAccount(item),

@@ -13,6 +13,7 @@ import '../widgets/booking_review_sheet.dart';
 import '../widgets/glass_ui.dart';
 import '../widgets/network_video_player.dart';
 import '../widgets/social_widgets.dart';
+import '../widgets/platinum_certificate.dart';
 import 'rhythm_game_screen.dart';
 
 class ClientHome extends StatefulWidget {
@@ -408,11 +409,7 @@ class _ClientHomeState extends State<ClientHome> {
                           ),
                         ),
                       ),
-                      const Icon(
-                        Icons.verified,
-                        color: Color(0xFF68DDCD),
-                        size: 18,
-                      ),
+                      PlatinumBadge(api: widget.api, group: band),
                     ],
                   ),
                   const SizedBox(height: 4),
@@ -548,6 +545,7 @@ class _ClientHomeState extends State<ClientHome> {
                       style: Theme.of(context).textTheme.headlineSmall
                           ?.copyWith(fontWeight: FontWeight.w800),
                     ),
+                    Center(child: PlatinumBadge(api: widget.api, group: band)),
                     Text(
                       'Corriente musical: ${band['musical_style']}',
                       textAlign: TextAlign.center,

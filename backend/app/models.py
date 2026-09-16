@@ -132,6 +132,8 @@ class MusicianProfile(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     user: Mapped[User] = relationship(back_populates="musician_profile")
     media: Mapped[list["Media"]] = relationship(back_populates="musician", cascade="all, delete-orphan")
+    platinum_certificate: Mapped["PlatinumCertificate | None"] = relationship(
+        cascade="all, delete-orphan", uselist=False)
     busy_dates: Mapped[list["MusicianBusyDate"]] = relationship(
         back_populates="musician", cascade="all, delete-orphan"
     )
@@ -314,6 +316,32 @@ class Media(Base):
     musician: Mapped[MusicianProfile] = relationship(back_populates="media")
     reactions: Mapped[list["MediaAjua"]] = relationship(cascade="all, delete-orphan")
     shares: Mapped[list["MediaShare"]] = relationship(cascade="all, delete-orphan")
+
+
+class PlatinumCertificate(Base):
+    __tablename__ = "platinum_certificates"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    musician_id: Mapped[int] = mapped_column(ForeignKey("musician_profiles.id"), unique=True)
+    certificate_code: Mapped[str] = mapped_column(String(60), unique=True)
+    group_name_snapshot: Mapped[str] = mapped_column(String(180))
+    recommendation: Mapped[str] = mapped_column(Text)
+    verification_method: Mapped[str] = mapped_column(String(30))
+    verified_on: Mapped[date] = mapped_column(Date)
+    issued_at: Mapped[datetime] = mapped_column(DateTime)
+    issued_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revocation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class PlatinumAudit(Base):
+    __tablename__ = "platinum_audit"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    musician_id: Mapped[int] = mapped_column(ForeignKey("musician_profiles.id"), index=True)
+    admin_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    action: Mapped[str] = mapped_column(String(20))
+    certificate_code: Mapped[str] = mapped_column(String(60))
+    details: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
 
 
 class MediaShare(Base):

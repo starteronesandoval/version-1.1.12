@@ -10,6 +10,7 @@ import '../widgets/booking_chat_sheet.dart';
 import '../widgets/glass_ui.dart';
 import '../widgets/network_video_player.dart';
 import '../widgets/social_widgets.dart';
+import '../widgets/platinum_certificate.dart';
 import 'group_rules_screen.dart';
 import 'rhythm_game_screen.dart';
 
@@ -807,6 +808,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
                 ),
               ),
               const SizedBox(height: 5),
+              PlatinumBadge(api: widget.api, group: data),
               Text(
                 'Corriente musical: ${data['musical_style']}',
                 textAlign: TextAlign.center,
