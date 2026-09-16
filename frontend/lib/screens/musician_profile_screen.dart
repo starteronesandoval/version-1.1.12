@@ -1265,7 +1265,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
               Expanded(
                 child: Text(
                   'Tu saldo: \$${((item['musician_earnings_cents'] as num) / 100).toStringAsFixed(2)} MXN · '
-                  '${const {'awaiting_payment': 'esperando pago', 'musician_funds_held': 'retenido hasta la calificación', 'disputed': 'en revisión', 'approved_for_payout': 'autorizado para depósito', 'pending_connect_account': 'falta vincular Stripe Connect', 'transfer_failed': 'transferencia pendiente de reintento', 'transferred': 'enviado a tu saldo de Stripe', 'paid_out': 'depositado'}[item['payout_status']] ?? item['payout_status']}',
+                  '${const {'awaiting_payment': 'esperando pago', 'musician_funds_held': 'retenido hasta que el cliente lo libere o pasen 2 horas del fin del evento sin disputa', 'disputed': 'en revisión', 'approved_for_payout': 'autorizado para depósito', 'pending_connect_account': 'falta vincular Stripe Connect', 'transfer_failed': 'transferencia pendiente de reintento', 'transferred': 'enviado a tu saldo de Stripe', 'paid_out': 'depositado'}[item['payout_status']] ?? item['payout_status']}',
                 ),
               ),
             ],

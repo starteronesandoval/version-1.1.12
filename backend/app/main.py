@@ -1575,6 +1575,11 @@ def admin_payout_action(
     if data.action in {"approve", "reject_dispute"}:
         if booking.payment_status != "paid":
             raise HTTPException(409, "El pago aún no está confirmado")
+        if booking_payout_window_open(booking):
+            raise HTTPException(
+                403,
+                "El pago permanecerá retenido durante las 2 horas posteriores al evento",
+            )
         booking.payout_status = "approved_for_payout"
         booking.approved_for_payout_at = datetime.now(timezone.utc).replace(tzinfo=None)
         if data.action == "reject_dispute":

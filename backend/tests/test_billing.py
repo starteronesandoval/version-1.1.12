@@ -267,6 +267,73 @@ def test_dispute_is_rejected_after_two_hour_window():
         assert db.get(Booking, booking_id).payout_status == "musician_funds_held"
 
 
+def test_client_can_release_during_two_hour_window():
+    headers, booking_id = create_booking_fixture("-early-release")
+    event_timezone = ZoneInfo(settings.event_timezone)
+    recently_finished = datetime.now(event_timezone) - timedelta(hours=1)
+    with SessionLocal() as db:
+        booking = db.get(Booking, booking_id)
+        booking.event_date = recently_finished.date()
+        booking.end_time = recently_finished.time().replace(
+            tzinfo=None, microsecond=0
+        )
+        booking.payment_status = "paid"
+        booking.payout_status = "musician_funds_held"
+        db.commit()
+
+    response = client.post(
+        f"/api/bookings/{booking_id}/release",
+        headers=headers,
+        json={},
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        saved = db.get(Booking, booking_id)
+        assert saved.payout_status == "pending_connect_account"
+        assert saved.approved_for_payout_at is not None
+
+
+def test_client_release_opens_exactly_at_event_end():
+    headers, booking_id = create_booking_fixture("-release-boundary")
+    ends_at = datetime(2035, 5, 20, 21, tzinfo=ZoneInfo(settings.event_timezone))
+    with SessionLocal() as db:
+        booking = db.get(Booking, booking_id)
+        booking.event_date = ends_at.date()
+        booking.payment_status = "paid"
+        booking.payout_status = "musician_funds_held"
+        db.commit()
+    with patch("app.main.datetime", wraps=datetime) as current:
+        current.now.return_value = ends_at - timedelta(seconds=1)
+        response = client.post(f"/api/bookings/{booking_id}/release", headers=headers, json={})
+        assert response.status_code == 403
+        current.now.return_value = ends_at
+        response = client.post(f"/api/bookings/{booking_id}/release", headers=headers, json={})
+        assert response.status_code == 200
+        assert client.post(f"/api/bookings/{booking_id}/release", headers=headers, json={}).status_code == 409
+
+
+def test_dispute_blocks_manual_and_automatic_release():
+    headers, booking_id = create_booking_fixture("-dispute-blocks-release")
+    ends_at = datetime.now(ZoneInfo(settings.event_timezone)) - timedelta(minutes=30)
+    with SessionLocal() as db:
+        booking = db.get(Booking, booking_id)
+        booking.event_date = ends_at.date()
+        booking.end_time = ends_at.time().replace(tzinfo=None)
+        booking.payment_status = "paid"
+        booking.payout_status = "musician_funds_held"
+        db.commit()
+    response = client.post(f"/api/bookings/{booking_id}/dispute", headers=headers,
+                           json={"reason": "El servicio no se completó según el contrato."})
+    assert response.status_code == 200
+    with patch("app.billing.stripe.Transfer.create") as transfer:
+        assert client.post(f"/api/bookings/{booking_id}/release", headers=headers, json={}).status_code == 409
+        with SessionLocal() as db:
+            release_due_payouts(db, now=ends_at + timedelta(hours=3))
+            assert db.get(Booking, booking_id).payout_status == "disputed"
+        transfer.assert_not_called()
+
+
 def test_money_flow_from_stripe_webhook_to_group_connect_account():
     client_headers, booking_id = create_booking_fixture("-money-flow")
     with SessionLocal() as db:

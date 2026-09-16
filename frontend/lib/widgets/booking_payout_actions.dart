@@ -48,6 +48,13 @@ class _BookingPayoutActionsState extends State<BookingPayoutActions> {
     return value != null && DateTime.now().isBefore(value);
   }
 
+  bool get eventFinished {
+    final value = deadline;
+    return value != null
+        ? !DateTime.now().isBefore(value.subtract(const Duration(hours: 2)))
+        : widget.booking['event_finished'] == true;
+  }
+
   String get countdown {
     final value = deadline;
     if (value == null) return 'Plazo no disponible';
@@ -64,7 +71,7 @@ class _BookingPayoutActionsState extends State<BookingPayoutActions> {
       context: context,
       builder:
           (context) => AlertDialog(
-            title: const Text('¿Liberar el pago ahora?'),
+            title: const Text('¿Liberar el dinero?'),
             content: Text(
               'Confirmas que el evento de ${widget.booking['group_name']} terminó '
               'correctamente. Esta acción no se puede deshacer.',
@@ -76,7 +83,7 @@ class _BookingPayoutActionsState extends State<BookingPayoutActions> {
               ),
               FilledButton(
                 onPressed: () => Navigator.pop(context, true),
-                child: const Text('Sí, liberar pago'),
+                child: const Text('Sí, liberar el dinero'),
               ),
             ],
           ),
@@ -191,14 +198,35 @@ class _BookingPayoutActionsState extends State<BookingPayoutActions> {
       );
     }
     if (status != 'musician_funds_held') {
-      return const _PayoutNotice(
+      final notice = switch (status) {
+        'pending_connect_account' => (
+          'Pago autorizado, pero todavía no transferido: la agrupación debe completar Stripe.',
+          Color(0xFFFFC857),
+        ),
+        'transfer_failed' => (
+          'La transferencia no se completó y está pendiente de revisión.',
+          Color(0xFFFFC857),
+        ),
+        'approved_for_payout' => (
+          'El pago está autorizado y la transferencia está en proceso.',
+          Color(0xFF68DDCD),
+        ),
+        'transferred' || 'paid_out' => (
+          'El pago fue enviado a la cuenta Stripe de la agrupación.',
+          Color(0xFF68DDCD),
+        ),
+        _ => (
+          'Estado del pago: ${status ?? 'no disponible'}.',
+          Color(0xFFFFC857),
+        ),
+      };
+      return _PayoutNotice(
         icon: Icons.verified_outlined,
-        text: 'El pago ya fue autorizado para la agrupación.',
-        color: Color(0xFF68DDCD),
+        text: notice.$1,
+        color: notice.$2,
       );
     }
-    if (widget.booking['event_finished'] != true ||
-        widget.booking['payment_status'] != 'paid') {
+    if (!eventFinished || widget.booking['payment_status'] != 'paid') {
       return const SizedBox.shrink();
     }
     return Container(
@@ -220,7 +248,9 @@ class _BookingPayoutActionsState extends State<BookingPayoutActions> {
           ),
           const SizedBox(height: 5),
           Text(
-            'Si no eliges una opción, el pago se libera automáticamente.',
+            'Puedes liberar el dinero al terminar el evento. Si no lo haces y no '
+            'hay una disputa, se autorizará automáticamente en Stripe 2 horas '
+            'después de la hora de término del contrato. Calificar no libera el dinero.',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 12,
@@ -228,11 +258,12 @@ class _BookingPayoutActionsState extends State<BookingPayoutActions> {
             ),
           ),
           const SizedBox(height: 12),
-          FilledButton.icon(
-            onPressed: sending ? null : releaseNow,
-            icon: const Icon(Icons.price_check_rounded),
-            label: Text(sending ? 'Procesando…' : 'Liberar ahora'),
-          ),
+          if (windowOpen)
+            FilledButton.icon(
+              onPressed: sending ? null : releaseNow,
+              icon: const Icon(Icons.price_check_rounded),
+              label: Text(sending ? 'Procesando…' : 'Liberar el dinero'),
+            ),
           if (windowOpen) ...[
             const SizedBox(height: 7),
             OutlinedButton.icon(
