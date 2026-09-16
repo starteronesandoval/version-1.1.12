@@ -9,6 +9,7 @@ import '../api_service.dart';
 import '../widgets/booking_chat_sheet.dart';
 import '../widgets/glass_ui.dart';
 import '../widgets/network_video_player.dart';
+import '../widgets/social_widgets.dart';
 import 'group_rules_screen.dart';
 import 'rhythm_game_screen.dart';
 
@@ -746,6 +747,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
       key: const ValueKey('profile'),
       padding: const EdgeInsets.fromLTRB(18, 12, 18, 32),
       children: [
+        AjuaInbox(api: widget.api),
         GlassCard(
           theme: resolveGroupTheme(
             selected: data['card_theme']?.toString(),

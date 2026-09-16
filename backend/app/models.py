@@ -312,3 +312,25 @@ class Media(Base):
     position: Mapped[int] = mapped_column(Integer)
     url: Mapped[str] = mapped_column(String(500))
     musician: Mapped[MusicianProfile] = relationship(back_populates="media")
+    reactions: Mapped[list["MediaAjua"]] = relationship(cascade="all, delete-orphan")
+    shares: Mapped[list["MediaShare"]] = relationship(cascade="all, delete-orphan")
+
+
+class MediaShare(Base):
+    __tablename__ = "media_shares"
+    __table_args__ = (UniqueConstraint("media_id", "client_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    media_id: Mapped[int] = mapped_column(ForeignKey("media.id", ondelete="CASCADE"), index=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("client_profiles.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+
+
+class MediaAjua(Base):
+    __tablename__ = "media_ajuas"
+    __table_args__ = (UniqueConstraint("media_id", "client_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    media_id: Mapped[int] = mapped_column(ForeignKey("media.id", ondelete="CASCADE"), index=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("client_profiles.id", ondelete="CASCADE"), index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    read: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))

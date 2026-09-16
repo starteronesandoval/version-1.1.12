@@ -44,6 +44,7 @@ from .billing import (
 )
 from .config import settings
 from .database import SessionLocal, get_db
+from .social import router as social_router
 from .models import (AvatarChoice, Booking, BookingReview, ChatMessage, ClientAvatar,
                      ClientProfile, Media, MediaType, MusicianBusyDate,
                      MusicianProfile, MusicianPayoutDestination, PasswordResetCode, RulesAcceptance,
@@ -78,6 +79,7 @@ CLIENT_SURCHARGE_RATE = Decimal("0.071")
 CLIENT_PLATFORM_FEE_RATE = Decimal("0.03")
 MUSICIAN_NET_RATE = Decimal("0.97")
 app.include_router(billing_router)
+app.include_router(social_router)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 app.add_middleware(
     CORSMiddleware,
@@ -1777,6 +1779,8 @@ def upload_media(media_type: MediaType, position: int = Query(ge=1), file: Uploa
     existing = db.scalar(select(Media).where(Media.musician_id == profile.id, Media.media_type == media_type, Media.position == position))
     public_url = f"/uploads/{profile.id}/{target.name}"
     if existing:
+        existing.reactions.clear()
+        existing.shares.clear()
         old = settings.upload_dir / str(profile.id) / Path(existing.url).name
         if old.exists(): old.unlink()
         existing.url = public_url

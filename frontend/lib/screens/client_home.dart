@@ -12,6 +12,7 @@ import '../widgets/event_chat_scanner.dart';
 import '../widgets/booking_review_sheet.dart';
 import '../widgets/glass_ui.dart';
 import '../widgets/network_video_player.dart';
+import '../widgets/social_widgets.dart';
 import 'rhythm_game_screen.dart';
 
 class ClientHome extends StatefulWidget {
@@ -641,6 +642,10 @@ class _ClientHomeState extends State<ClientHome> {
                             ),
                           ),
                         ),
+                        AjuaActions(
+                          api: widget.api,
+                          mediaId: photo['id'] as int,
+                        ),
                         const SizedBox(height: 14),
                       ],
                     ],
@@ -657,6 +662,10 @@ class _ClientHomeState extends State<ClientHome> {
                       for (final video in videos) ...[
                         NetworkVideoPlayer(
                           url: widget.api.mediaUrl(video['url'])!,
+                        ),
+                        AjuaActions(
+                          api: widget.api,
+                          mediaId: video['id'] as int,
                         ),
                         const SizedBox(height: 14),
                       ],
@@ -1805,6 +1814,22 @@ class _ClientHomeState extends State<ClientHome> {
                       fontWeight: FontWeight.w800,
                     ),
                   ),
+                  if (clientProfile != null)
+                    TextButton.icon(
+                      onPressed:
+                          () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder:
+                                  (_) => SharedProfilePage(
+                                    api: widget.api,
+                                    clientId: clientProfile!['id'] as int,
+                                    openGroup: _showBand,
+                                  ),
+                            ),
+                          ),
+                      icon: const Icon(Icons.collections_outlined),
+                      label: const Text('Mis publicaciones compartidas'),
+                    ),
                   const SizedBox(height: 20),
                   TextField(
                     controller: name,
