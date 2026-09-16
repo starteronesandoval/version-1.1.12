@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../api_service.dart';
 import '../widgets/booking_chat_sheet.dart';
 import '../widgets/glass_ui.dart';
 import '../widgets/platinum_certificate.dart';
+import '../widgets/platinum_requests.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({
@@ -25,12 +27,42 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   List<Map<String, dynamic>> clients = [];
   List<Map<String, dynamic>> groups = [];
   List<Map<String, dynamic>> bookings = [];
+  Timer? requestTimer;
+  bool refreshingRequests = false;
 
   @override
   void initState() {
     super.initState();
     load();
+    requestTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => refreshRequests(),
+    );
   }
+
+  @override
+  void dispose() {
+    requestTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> refreshRequests() async {
+    if (loading || refreshingRequests) return;
+    refreshingRequests = true;
+    try {
+      final result = await widget.api.get('/api/admin/groups') as List;
+      if (mounted) setState(() => groups = result.cast<Map<String, dynamic>>());
+    } on ApiException {
+      // Keep the last loaded list; the manual refresh displays connection errors.
+    } finally {
+      refreshingRequests = false;
+    }
+  }
+
+  List<Map<String, dynamic>> get platinumRequests =>
+      groups
+          .where((group) => group['platinum_request']?['status'] == 'pending')
+          .toList();
 
   Future<void> load() async {
     setState(() {
@@ -165,6 +197,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       'user_id',
       'platinum_certificate',
       'can_manage_platinum',
+      'platinum_request',
     };
     final entries = item.entries.where((entry) => !omitted.contains(entry.key));
     final rules = item['rules_acceptances'] as List<dynamic>? ?? [];
@@ -207,6 +240,24 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ],
           if (item['group_name'] != null) ...[
             PlatinumBadge(api: widget.api, group: item),
+            if (item['platinum_request']?['status'] == 'pending')
+              const Chip(
+                avatar: Icon(Icons.notifications_active_outlined),
+                label: Text('Solicita Platino'),
+              ),
+            OutlinedButton.icon(
+              onPressed: () async {
+                final changed = await Navigator.of(context).push<bool>(
+                  MaterialPageRoute(
+                    builder:
+                        (_) => PlatinumReviewPage(api: widget.api, group: item),
+                  ),
+                );
+                if (changed == true && mounted) await load();
+              },
+              icon: const Icon(Icons.person_search_outlined),
+              label: const Text('Ver perfil y revisar Platino'),
+            ),
             if (item['can_manage_platinum'] == true)
               FilledButton.tonalIcon(
                 onPressed: () async {
@@ -357,7 +408,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   @override
   Widget build(BuildContext context) => DefaultTabController(
-    length: 4,
+    length: 5,
     child: Scaffold(
       appBar: AppBar(
         title: const Text('Panel administrativo'),
@@ -368,13 +419,17 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             icon: const Icon(Icons.logout),
           ),
         ],
-        bottom: const TabBar(
+        bottom: TabBar(
           isScrollable: true,
           tabs: [
             Tab(icon: Icon(Icons.people_outline), text: 'Clientes'),
             Tab(icon: Icon(Icons.groups_outlined), text: 'Agrupaciones'),
             Tab(icon: Icon(Icons.receipt_long_outlined), text: 'Contratos'),
             Tab(icon: Icon(Icons.gavel_outlined), text: 'Disputas'),
+            Tab(
+              icon: const Icon(Icons.workspace_premium_outlined),
+              text: 'Platino (${platinumRequests.length})',
+            ),
           ],
         ),
       ),
@@ -405,6 +460,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                               )
                               .toList(),
                       disputesOnly: true,
+                    ),
+                    records(
+                      platinumRequests,
+                      'No hay solicitudes Platino pendientes',
+                      (item) => item['group_name'].toString(),
                     ),
                   ],
                 ),

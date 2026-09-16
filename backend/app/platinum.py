@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from .auth import require_role
 from .config import settings
 from .database import get_db
-from .models import MusicianProfile, PlatinumAudit, PlatinumCertificate, User, UserRole
+from .models import MusicianProfile, PlatinumAudit, PlatinumCertificate, PlatinumRequest, User, UserRole
 from .schemas import PlatinumResponse
 
 PLATINUM_ADMIN_EMAIL = "administrador@balam.local"
@@ -49,6 +49,72 @@ class PlatinumIssue(BaseModel):
 class PlatinumRevoke(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     reason: str = Field(min_length=10, max_length=2000)
+
+
+class PlatinumRequestCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    message: str = Field(default="", max_length=2000)
+
+
+def request_state(profile: MusicianProfile) -> dict:
+    request = profile.platinum_request
+    certificate = public_certificate(profile)
+    return {
+        "status": "certified" if certificate else (
+            "revoked" if request and request.status == "approved" else request.status if request else "not_requested"),
+        "message": request.message if request else "",
+        "response": request.response if request else None,
+        "submitted_at": request.submitted_at.replace(tzinfo=timezone.utc) if request else None,
+        "reviewed_at": request.reviewed_at.replace(tzinfo=timezone.utc) if request and request.reviewed_at else None,
+        "certificate": certificate.model_dump(mode="json") if certificate else None,
+    }
+
+
+@router.get("/musicians/me/platinum-request")
+def my_platinum_request(user: User = Depends(require_role(UserRole.musician)), db: Session = Depends(get_db)):
+    profile = db.scalar(select(MusicianProfile).where(MusicianProfile.user_id == user.id))
+    if not profile:
+        raise HTTPException(409, "Crea primero el perfil de tu agrupación")
+    return request_state(profile)
+
+
+@router.post("/musicians/me/platinum-request")
+def request_platinum(data: PlatinumRequestCreate,
+                     user: User = Depends(require_role(UserRole.musician)), db: Session = Depends(get_db)):
+    profile = db.scalar(select(MusicianProfile).where(MusicianProfile.user_id == user.id).with_for_update())
+    if not profile:
+        raise HTTPException(409, "Crea primero el perfil de tu agrupación")
+    if public_certificate(profile):
+        raise HTTPException(409, "Tu agrupación ya tiene Platino activo")
+    request = profile.platinum_request
+    if request and request.status == "pending":
+        return request_state(profile)
+    if request is None:
+        request = PlatinumRequest(musician_id=profile.id)
+        profile.platinum_request = request
+    request.status = "pending"
+    request.message = data.message
+    request.submitted_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    request.response = None
+    request.reviewed_at = None
+    request.reviewed_by_user_id = None
+    db.commit()
+    return request_state(profile)
+
+
+@router.post("/admin/musicians/{musician_id}/platinum-request/reject")
+def reject_platinum_request(musician_id: int, data: PlatinumRevoke,
+                           user: User = Depends(platinum_admin), db: Session = Depends(get_db)):
+    profile = db.scalar(select(MusicianProfile).where(MusicianProfile.id == musician_id).with_for_update())
+    request = profile.platinum_request if profile else None
+    if not request or request.status != "pending" or public_certificate(profile):
+        raise HTTPException(409, "No hay una solicitud pendiente para esta agrupación")
+    request.status = "rejected"
+    request.response = data.reason
+    request.reviewed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    request.reviewed_by_user_id = user.id
+    db.commit()
+    return request_state(profile)
 
 
 def public_certificate(profile: MusicianProfile) -> PlatinumResponse | None:
@@ -102,6 +168,11 @@ def issue_certificate(musician_id: int, data: PlatinumIssue,
     certificate.issued_by_user_id = user.id
     certificate.revoked_at = None
     certificate.revocation_reason = None
+    if profile.platinum_request:
+        profile.platinum_request.status = "approved"
+        profile.platinum_request.response = "La administración aprobó tu certificación Platino."
+        profile.platinum_request.reviewed_at = now
+        profile.platinum_request.reviewed_by_user_id = user.id
     db.add(PlatinumAudit(musician_id=profile.id, admin_user_id=user.id,
         action=action, certificate_code=certificate.certificate_code,
         details=json.dumps({**data.model_dump(mode="json"), "group_name": certificate.group_name_snapshot}, ensure_ascii=False),
@@ -121,6 +192,11 @@ def revoke_certificate(musician_id: int, data: PlatinumRevoke,
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         certificate.revoked_at = now
         certificate.revocation_reason = data.reason
+        if profile.platinum_request:
+            profile.platinum_request.status = "revoked"
+            profile.platinum_request.response = data.reason
+            profile.platinum_request.reviewed_at = now
+            profile.platinum_request.reviewed_by_user_id = user.id
         db.add(PlatinumAudit(musician_id=musician_id, admin_user_id=user.id,
             action="revoked", certificate_code=certificate.certificate_code,
             details=json.dumps({"reason": data.reason}, ensure_ascii=False), created_at=now))

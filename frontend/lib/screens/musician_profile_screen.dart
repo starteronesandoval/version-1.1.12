@@ -11,6 +11,7 @@ import '../widgets/glass_ui.dart';
 import '../widgets/network_video_player.dart';
 import '../widgets/social_widgets.dart';
 import '../widgets/platinum_certificate.dart';
+import '../widgets/platinum_requests.dart';
 import 'group_rules_screen.dart';
 import 'rhythm_game_screen.dart';
 
@@ -749,6 +750,11 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
       padding: const EdgeInsets.fromLTRB(18, 12, 18, 32),
       children: [
         AjuaInbox(api: widget.api),
+        PlatinumRequestCard(
+          api: widget.api,
+          group: data,
+          onChanged: loadProfile,
+        ),
         GlassCard(
           theme: resolveGroupTheme(
             selected: data['card_theme']?.toString(),

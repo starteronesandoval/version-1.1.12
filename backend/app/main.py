@@ -45,7 +45,7 @@ from .billing import (
 from .config import settings
 from .database import SessionLocal, get_db
 from .social import router as social_router
-from .platinum import router as platinum_router, public_certificate, can_manage_platinum
+from .platinum import router as platinum_router, public_certificate, can_manage_platinum, request_state
 from .models import (AvatarChoice, Booking, BookingReview, ChatMessage, ClientAvatar,
                      ClientProfile, Media, MediaType, MusicianBusyDate,
                      MusicianProfile, MusicianPayoutDestination, PasswordResetCode, RulesAcceptance,
@@ -386,6 +386,7 @@ def musician_profiles():
     return select(MusicianProfile).options(
         selectinload(MusicianProfile.media),
         selectinload(MusicianProfile.platinum_certificate),
+        selectinload(MusicianProfile.platinum_request),
         selectinload(MusicianProfile.user).selectinload(User.avatar_choice),
         selectinload(MusicianProfile.reviews),
         selectinload(MusicianProfile.payout_destination),
@@ -893,6 +894,7 @@ def admin_groups(
     return [{
         **musician_out(profile).model_dump(),
         "can_manage_platinum": can_manage_platinum(user),
+        "platinum_request": request_state(profile),
         "account_email": None if profile.user.phone else profile.user.email,
         "account_phone": profile.user.phone,
         "admin_phone": profile.admin_phone,

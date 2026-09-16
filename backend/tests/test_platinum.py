@@ -11,7 +11,7 @@ from sqlalchemy import select
 from app.auth import create_token
 from app.database import Base, SessionLocal, engine
 from app.main import app
-from app.models import User, UserRole, MusicianProfile, PlatinumAudit
+from app.models import User, UserRole, MusicianProfile, PlatinumAudit, PlatinumRequest
 
 client = TestClient(app)
 
@@ -107,3 +107,66 @@ def test_edits_preserve_history_and_changed_identity_hides_certificate():
         db.commit()
     assert client.get(f'/api/musicians/{group_id}/platinum').status_code == 404
     assert client.get(f'/api/musicians/{group_id}').json().get('platinum_certificate') is None
+
+
+def test_musician_requests_once_then_admin_approves_without_deployment():
+    headers, group_id = fixture()
+    url = '/api/musicians/me/platinum-request'
+    assert client.get(url, headers=headers[2]).json()['status'] == 'not_requested'
+    response = client.post(url, headers=headers[2], json={'message': 'Estamos disponibles para una visita.'})
+    assert response.status_code == 200
+    original = response.json()
+    assert original['status'] == 'pending'
+    assert client.post(url, headers=headers[2], json={'message': 'Duplicado'}).json() == original
+    with SessionLocal() as db:
+        assert len(db.scalars(select(PlatinumRequest)).all()) == 1
+    assert client.get(f'/api/musicians/{group_id}/platinum').status_code == 404
+    public = client.get(f'/api/musicians/{group_id}').json()
+    assert 'platinum_request' not in public
+    group = client.get('/api/admin/groups', headers=headers[0]).json()[0]
+    assert group['platinum_request']['status'] == 'pending'
+    assert group['platinum_request']['message'] == 'Estamos disponibles para una visita.'
+    result = client.put(f'/api/admin/musicians/{group_id}/platinum', headers=headers[0], json=payload())
+    assert result.status_code == 200
+    approved = client.get(url, headers=headers[2]).json()
+    assert approved['status'] == 'certified'
+    assert approved['certificate']['certificate_code'] == result.json()['certificate_code']
+    assert client.post(url, headers=headers[2], json={}).status_code == 409
+    assert client.get('/api/admin/groups', headers=headers[0]).json()[0]['platinum_request']['status'] == 'certified'
+
+
+def test_request_rejection_revocation_and_resubmission():
+    headers, group_id = fixture()
+    url = '/api/musicians/me/platinum-request'
+    review = f'/api/admin/musicians/{group_id}/platinum-request/reject'
+    client.post(url, headers=headers[2], json={})
+    assert client.post(review, headers=headers[1], json={'reason': 'Necesitamos una visita presencial.'}).status_code == 403
+    assert client.post(review, headers=headers[0], json={'reason': 'No'}).status_code == 422
+    response = client.post(review, headers=headers[0], json={'reason': 'Necesitamos una visita presencial.'})
+    assert response.json()['status'] == 'rejected'
+    assert client.get(url, headers=headers[2]).json()['response'] == 'Necesitamos una visita presencial.'
+    assert client.post(review, headers=headers[0], json={'reason': 'Duplicado de rechazo'}).status_code == 409
+    assert client.post(url, headers=headers[2], json={'message': 'Ya podemos recibir la visita.'}).json()['status'] == 'pending'
+    cert = f'/api/admin/musicians/{group_id}/platinum'
+    client.put(cert, headers=headers[0], json=payload())
+    assert client.post(review, headers=headers[0], json={'reason': 'No debe retirar un certificado aprobado'}).status_code == 409
+    client.post(cert + '/revoke', headers=headers[0], json={'reason': 'Se requiere una nueva verificación.'})
+    assert client.get(url, headers=headers[2]).json()['status'] == 'revoked'
+    assert client.post(url, headers=headers[2], json={}).json()['status'] == 'pending'
+    assert client.get(f'/api/musicians/{group_id}/platinum').status_code == 404
+
+
+def test_request_permissions_and_unrelated_group_isolation():
+    headers, group_id = fixture()
+    url = '/api/musicians/me/platinum-request'
+    assert client.post(url, json={}).status_code == 401
+    for forbidden in [headers[0], headers[1], headers[3]]:
+        assert client.post(url, headers=forbidden, json={}).status_code == 403
+    assert client.post(url, headers=headers[2], json={'musician_id': 999, 'status': 'approved'}).status_code == 422
+    assert client.post(url, headers=headers[2], json={'message': 'a' * 2001}).status_code == 422
+    with SessionLocal() as db:
+        other_user = User(email='other-group@example.com', role=UserRole.musician, password_hash='unused')
+        db.add(other_user); db.commit()
+        other_headers = {'Authorization': f'Bearer {create_token(other_user)}'}
+    assert client.post(url, headers=other_headers, json={}).status_code == 409
+    assert client.get(url, headers=headers[2]).json()['status'] == 'not_requested'

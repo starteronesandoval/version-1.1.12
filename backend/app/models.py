@@ -134,6 +134,8 @@ class MusicianProfile(Base):
     media: Mapped[list["Media"]] = relationship(back_populates="musician", cascade="all, delete-orphan")
     platinum_certificate: Mapped["PlatinumCertificate | None"] = relationship(
         cascade="all, delete-orphan", uselist=False)
+    platinum_request: Mapped["PlatinumRequest | None"] = relationship(
+        cascade="all, delete-orphan", uselist=False)
     busy_dates: Mapped[list["MusicianBusyDate"]] = relationship(
         back_populates="musician", cascade="all, delete-orphan"
     )
@@ -316,6 +318,18 @@ class Media(Base):
     musician: Mapped[MusicianProfile] = relationship(back_populates="media")
     reactions: Mapped[list["MediaAjua"]] = relationship(cascade="all, delete-orphan")
     shares: Mapped[list["MediaShare"]] = relationship(cascade="all, delete-orphan")
+
+
+class PlatinumRequest(Base):
+    __tablename__ = "platinum_requests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    musician_id: Mapped[int] = mapped_column(ForeignKey("musician_profiles.id"), unique=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    message: Mapped[str] = mapped_column(Text, default="")
+    response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reviewed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
 
 class PlatinumCertificate(Base):
