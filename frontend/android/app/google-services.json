@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "882316037020",
+    "project_id": "garibaldi-508217",
+    "storage_bucket": "garibaldi-508217.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:882316037020:android:f841e93335fb5c2ea41659",
+        "android_client_info": {
+          "package_name": "mx.balam.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "882316037020-3tgmqu1p4vn8g187aam0svvo8cmr1l0g.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAvKOeRJ9sSNTHgPdoze2IanMzqwPteQGU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "882316037020-3tgmqu1p4vn8g187aam0svvo8cmr1l0g.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

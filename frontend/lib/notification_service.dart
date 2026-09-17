@@ -11,21 +11,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'api_service.dart';
 import 'widgets/notification_inbox.dart';
 
-const _apiKey = String.fromEnvironment('FIREBASE_API_KEY');
-const _appId = String.fromEnvironment('FIREBASE_APP_ID');
-const _senderId = String.fromEnvironment('FIREBASE_MESSAGING_SENDER_ID');
-const _projectId = String.fromEnvironment('FIREBASE_PROJECT_ID');
-
-const _options = FirebaseOptions(
-  apiKey: _apiKey,
-  appId: _appId,
-  messagingSenderId: _senderId,
-  projectId: _projectId,
-);
-
 @pragma('vm:entry-point')
 Future<void> garibaldiBackgroundMessage(RemoteMessage message) async {
-  await Firebase.initializeApp(options: _options);
+  await Firebase.initializeApp();
   // Android displays notification payloads while the app is in background.
 }
 
@@ -39,15 +27,13 @@ class GaribaldiNotifications {
   bool _pendingOpen = false;
   String? _installationId;
 
-  bool get supported => !kIsWeb && defaultTargetPlatform == TargetPlatform.android
-      && _apiKey.isNotEmpty && _appId.isNotEmpty
-      && _senderId.isNotEmpty && _projectId.isNotEmpty;
+  bool get supported => !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   Future<void> activate() async {
     if (!supported) return;
     try {
       if (!_ready) {
-        await Firebase.initializeApp(options: _options);
+        await Firebase.initializeApp();
         FirebaseMessaging.onBackgroundMessage(garibaldiBackgroundMessage);
         await local.initialize(
           settings: const InitializationSettings(
