@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../widgets/notification_inbox.dart';
 
 import '../api_service.dart';
 import '../widgets/booking_chat_sheet.dart';
@@ -413,6 +414,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       appBar: AppBar(
         title: const Text('Panel administrativo'),
         actions: [
+          NotificationInboxButton(api: widget.api),
           IconButton(onPressed: load, icon: const Icon(Icons.refresh)),
           IconButton(
             onPressed: widget.onLogout,

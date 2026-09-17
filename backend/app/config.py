@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     event_timezone: str = "America/Mexico_City"
     payout_auto_release_hours: int = Field(default=2, ge=2, le=2)
     payout_release_scan_seconds: int = Field(default=60, ge=10, le=3600)
+    fcm_project_id: str | None = None
+    fcm_credentials_file: Path | None = None
+    push_scan_seconds: int = Field(default=15, ge=5, le=300)
     stripe_secret_key: str | None = None
     stripe_webhook_secret: str | None = None
     billing_success_url: str = (

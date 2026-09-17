@@ -39,6 +39,41 @@ class User(Base):
     )
 
 
+class PushDevice(Base):
+    __tablename__ = "push_devices"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    installation_id: Mapped[str] = mapped_column(String(100), unique=True)
+    token: Mapped[str] = mapped_column(String(512), unique=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+
+
+class UserNotification(Base):
+    __tablename__ = "user_notifications"
+    __table_args__ = (UniqueConstraint("user_id", "event_key"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    event_key: Mapped[str] = mapped_column(String(160))
+    kind: Mapped[str] = mapped_column(String(40))
+    title: Mapped[str] = mapped_column(String(120))
+    body: Mapped[str] = mapped_column(String(250))
+    data_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class PushDelivery(Base):
+    __tablename__ = "push_deliveries"
+    __table_args__ = (UniqueConstraint("notification_id", "device_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    notification_id: Mapped[int] = mapped_column(ForeignKey("user_notifications.id", ondelete="CASCADE"), index=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("push_devices.id", ondelete="CASCADE"), index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class BillingCustomer(Base):
     __tablename__ = "billing_customers"
     id: Mapped[int] = mapped_column(primary_key=True)

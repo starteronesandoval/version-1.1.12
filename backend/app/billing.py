@@ -15,6 +15,7 @@ from .config import settings
 from .database import get_db
 from .models import (BillingCustomer, Booking, MusicianPayoutDestination,
                      MusicianProfile, StripeWebhookEvent, User, UserRole)
+from .notifications import enqueue
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
@@ -328,10 +329,17 @@ def sync_checkout(event_type: str, obj, db: Session) -> None:
         return
     if event_type in {"checkout.session.completed", "checkout.session.async_payment_succeeded"}:
         if obj.get("payment_status") in {"paid", "no_payment_required"}:
+            first_confirmation = booking.payment_status != "paid"
             booking.payment_status = "paid"
             if booking.payout_status == "awaiting_payment":
                 booking.payout_status = "musician_funds_held"
             booking.stripe_payment_intent_id = obj.get("payment_intent")
+            if first_confirmation:
+                enqueue(db, user_id=booking.musician.user_id,
+                        event_key=f"booking_paid:{booking.id}", kind="booking",
+                        title="Contratación confirmada",
+                        body="El cliente confirmó y pagó la contratación.",
+                        data={"booking_id": str(booking.id)})
     elif event_type == "checkout.session.async_payment_failed":
         booking.payment_status = "failed"
     elif event_type == "checkout.session.expired" and booking.payment_status != "paid":
@@ -345,6 +353,11 @@ def release_musician_funds(booking_id: int, db: Session) -> bool:
         return False
     if booking.stripe_transfer_id:
         booking.payout_status = "transferred"
+        enqueue(db, user_id=booking.musician.user_id,
+                event_key=f"payout_transferred:{booking.id}", kind="payment",
+                title="Pago liberado",
+                body="El pago de tu evento fue enviado a tu cuenta.",
+                data={"booking_id": str(booking.id)})
         db.commit()
         return True
     destination = db.scalar(select(MusicianPayoutDestination).where(
@@ -389,6 +402,11 @@ def release_musician_funds(booking_id: int, db: Session) -> bool:
         booking.stripe_transfer_id = transfer.id
         booking.payout_status = "transferred"
         booking.payout_error = None
+        enqueue(db, user_id=booking.musician.user_id,
+                event_key=f"payout_transferred:{booking.id}", kind="payment",
+                title="Pago liberado",
+                body="El pago de tu evento fue enviado a tu cuenta.",
+                data={"booking_id": str(booking.id)})
         db.commit()
         return True
     except (stripe.error.StripeError, ValueError, HTTPException) as error:

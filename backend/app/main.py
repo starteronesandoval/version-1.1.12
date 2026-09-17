@@ -45,6 +45,7 @@ from .billing import (
 from .config import settings
 from .database import SessionLocal, get_db
 from .social import router as social_router
+from .notifications import router as notifications_router, enqueue, dispatch_pending
 from .platinum import router as platinum_router, public_certificate, can_manage_platinum, request_state
 from .models import (AvatarChoice, Booking, BookingReview, ChatMessage, ClientAvatar,
                      ClientProfile, Media, MediaType, MusicianBusyDate,
@@ -81,6 +82,7 @@ CLIENT_PLATFORM_FEE_RATE = Decimal("0.03")
 MUSICIAN_NET_RATE = Decimal("0.97")
 app.include_router(billing_router)
 app.include_router(social_router)
+app.include_router(notifications_router)
 app.include_router(platinum_router)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 app.add_middleware(
@@ -142,22 +144,33 @@ async def automatic_payout_release_loop() -> None:
         await asyncio.sleep(settings.payout_release_scan_seconds)
 
 
+async def push_delivery_loop() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(dispatch_pending)
+        except Exception:
+            logger.exception("Falló el envío de avisos")
+        await asyncio.sleep(settings.push_scan_seconds)
+
+
 @app.on_event("startup")
 async def start_automatic_payout_release() -> None:
     app.state.payout_release_task = asyncio.create_task(
         automatic_payout_release_loop()
     )
+    app.state.push_delivery_task = asyncio.create_task(push_delivery_loop())
 
 
 @app.on_event("shutdown")
 async def stop_automatic_payout_release() -> None:
-    task = getattr(app.state, "payout_release_task", None)
-    if task:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+    for task_name in ("payout_release_task", "push_delivery_task"):
+        task = getattr(app.state, task_name, None)
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 def request_client_ip(request: Request) -> str:
@@ -1390,6 +1403,12 @@ def create_booking(
         )
     )
     try:
+        db.flush()
+        enqueue(db, user_id=musician.user_id,
+                event_key=f"booking_created:{booking.id}", kind="booking",
+                title="Nueva solicitud de contratación",
+                body="Un cliente solicitó contratar a tu agrupación.",
+                data={"booking_id": str(booking.id)})
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -1668,6 +1687,14 @@ def send_booking_message(
     if not message.text:
         raise HTTPException(422, "Escribe un mensaje")
     db.add(message)
+    db.flush()
+    for recipient_id in (booking.client.user_id, booking.musician.user_id):
+        if recipient_id != user.id:
+            enqueue(db, user_id=recipient_id,
+                    event_key=f"booking_message:{message.id}", kind="message",
+                    title="Mensaje del evento",
+                    body="Tienes un nuevo mensaje en el chat del evento.",
+                    data={"booking_id": str(booking.id)})
     db.commit()
     db.refresh(message)
     return chat_message_out(message, booking, user)
@@ -1764,6 +1791,14 @@ def send_event_chat_message(
     if not message.text:
         raise HTTPException(422, "Escribe un mensaje")
     db.add(message)
+    db.flush()
+    for recipient_id in (booking.client.user_id, booking.musician.user_id):
+        if recipient_id != user.id:
+            enqueue(db, user_id=recipient_id,
+                    event_key=f"event_message:{message.id}", kind="message",
+                    title="Mensaje del evento",
+                    body="Tienes un nuevo mensaje en el chat del evento.",
+                    data={"booking_id": str(booking.id)})
     db.commit()
     db.refresh(message)
     return chat_message_out(message, booking, user)

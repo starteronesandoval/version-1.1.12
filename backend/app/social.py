@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from .auth import current_user, require_role
 from .database import get_db
 from .models import ClientProfile, Media, MediaAjua, MediaShare, MusicianProfile, User, UserRole
+from .notifications import enqueue
 
 router = APIRouter(prefix="/api")
 
@@ -41,7 +42,7 @@ def get_ajua(media_id: int, user: User = Depends(current_user), db: Session = De
 @router.put("/media/{media_id}/ajua")
 def set_ajua(media_id: int, data: AjuaUpdate,
              user: User = Depends(require_role(UserRole.client)), db: Session = Depends(get_db)):
-    media_or_404(media_id, db)
+    media = media_or_404(media_id, db)
     profile = db.scalar(select(ClientProfile).where(ClientProfile.user_id == user.id))
     if not profile:
         raise HTTPException(409, "Completa tu perfil de cliente")
@@ -51,6 +52,12 @@ def set_ajua(media_id: int, data: AjuaUpdate,
         reaction.active = data.active
     elif data.active:
         db.add(MediaAjua(media_id=media_id, client_id=profile.id))
+        musician = db.get(MusicianProfile, media.musician_id)
+        enqueue(db, user_id=musician.user_id,
+                event_key=f"ajua:{media_id}:{profile.id}", kind="ajua",
+                title="¡Ajua en tu publicación!",
+                body="A un cliente le gustó una foto o video de tu agrupación.",
+                data={"media_id": str(media_id)})
     try:
         db.commit()
     except IntegrityError:
@@ -92,7 +99,7 @@ def read_notification(notification_id: int, user: User = Depends(require_role(Us
 @router.put("/media/{media_id}/share")
 def share_media(media_id: int, data: AjuaUpdate,
                 user: User = Depends(require_role(UserRole.client)), db: Session = Depends(get_db)):
-    media_or_404(media_id, db)
+    media = media_or_404(media_id, db)
     profile = db.scalar(select(ClientProfile).where(ClientProfile.user_id == user.id))
     if not profile:
         raise HTTPException(409, "Completa tu perfil de cliente")
@@ -100,6 +107,12 @@ def share_media(media_id: int, data: AjuaUpdate,
         MediaShare.media_id == media_id, MediaShare.client_id == profile.id))
     if data.active and not share:
         db.add(MediaShare(media_id=media_id, client_id=profile.id))
+        musician = db.get(MusicianProfile, media.musician_id)
+        enqueue(db, user_id=musician.user_id,
+                event_key=f"share:{media_id}:{profile.id}", kind="share",
+                title="Compartieron tu publicación",
+                body="Un cliente compartió una foto o video tuyo en su perfil.",
+                data={"media_id": str(media_id)})
     elif not data.active and share:
         db.delete(share)
     try:

@@ -12,6 +12,7 @@ import '../widgets/network_video_player.dart';
 import '../widgets/social_widgets.dart';
 import '../widgets/platinum_certificate.dart';
 import '../widgets/platinum_requests.dart';
+import '../widgets/notification_inbox.dart';
 import 'group_rules_screen.dart';
 import 'rhythm_game_screen.dart';
 
@@ -666,6 +667,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
       actions:
           rulesAccepted
               ? [
+                NotificationInboxButton(api: widget.api),
                 IconButton(
                   tooltip: 'Salto musical',
                   onPressed:
@@ -687,6 +689,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
                 ),
               ]
               : [
+                NotificationInboxButton(api: widget.api),
                 IconButton(
                   onPressed: widget.onLogout,
                   icon: const Icon(Icons.logout),

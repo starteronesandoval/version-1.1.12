@@ -14,6 +14,7 @@ import '../widgets/glass_ui.dart';
 import '../widgets/network_video_player.dart';
 import '../widgets/social_widgets.dart';
 import '../widgets/platinum_certificate.dart';
+import '../widgets/notification_inbox.dart';
 import 'rhythm_game_screen.dart';
 
 class ClientHome extends StatefulWidget {
@@ -151,6 +152,7 @@ class _ClientHomeState extends State<ClientHome> {
       actions:
           clientProfile?['profile_complete'] == true
               ? [
+                NotificationInboxButton(api: widget.api),
                 IconButton(
                   tooltip: 'Entrar a una fiesta con QR',
                   onPressed: () => scanEventChatQr(context, widget.api),
@@ -198,6 +200,7 @@ class _ClientHomeState extends State<ClientHome> {
                 ),
               ]
               : [
+                NotificationInboxButton(api: widget.api),
                 IconButton(
                   onPressed: widget.onLogout,
                   icon: const Icon(Icons.logout),

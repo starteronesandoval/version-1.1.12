@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'api_service.dart';
+import 'notification_service.dart';
 import 'screens/auth_screen.dart';
 import 'screens/admin_dashboard_screen.dart';
 import 'screens/client_home.dart';
@@ -23,6 +24,8 @@ class BalamApp extends StatefulWidget {
 
 class _BalamAppState extends State<BalamApp> {
   late final ApiService api;
+  final navigatorKey = GlobalKey<NavigatorState>();
+  late final GaribaldiNotifications notifications;
   String? role;
   bool loading = true;
   bool _restoreFinished = false;
@@ -33,6 +36,7 @@ class _BalamAppState extends State<BalamApp> {
   void initState() {
     super.initState();
     api = widget.api ?? ApiService();
+    notifications = GaribaldiNotifications(api, navigatorKey);
     _restore();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await Future<void>.delayed(const Duration(milliseconds: 1800));
@@ -54,6 +58,7 @@ class _BalamAppState extends State<BalamApp> {
       role = await api.role;
       if (role != null) {
         await api.get('/api/users/me');
+        if (widget.api == null) notifications.activate();
       }
     } on ApiException catch (error) {
       if (error.statusCode == 401) {
@@ -80,11 +85,15 @@ class _BalamAppState extends State<BalamApp> {
     }
   }
 
-  void _signedIn(String value) => setState(() {
-    role = value;
-    startupError = null;
-  });
+  void _signedIn(String value) {
+    setState(() {
+      role = value;
+      startupError = null;
+    });
+    if (widget.api == null) notifications.activate();
+  }
   Future<void> _logout() async {
+    if (widget.api == null) await notifications.deactivate();
     await api.logout();
     if (mounted) {
       setState(() {
@@ -141,6 +150,7 @@ class _BalamAppState extends State<BalamApp> {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
+    navigatorKey: navigatorKey,
     debugShowCheckedModeBanner: false,
     title: 'Garibaldi',
     theme: ThemeData(
