@@ -262,6 +262,7 @@ class Booking(Base):
     duration_minutes: Mapped[int] = mapped_column(Integer, default=0)
     subtotal_cents: Mapped[int] = mapped_column(Integer, default=0)
     service_fee_cents: Mapped[int] = mapped_column(Integer, default=0)
+    currency_conversion_fee_cents: Mapped[int] = mapped_column(Integer, default=0)
     total_cents: Mapped[int] = mapped_column(Integer, default=0)
     musician_earnings_cents: Mapped[int] = mapped_column(Integer, default=0)
     platform_fee_cents: Mapped[int] = mapped_column(Integer, default=0)

@@ -72,17 +72,18 @@ def create_booking_fixture(suffix: str = "") -> tuple[dict[str, str], int]:
         return {"Authorization": f"Bearer {create_token(client_user)}"}, booking.id
 
 
-def test_price_snapshot_multiplies_hours_then_adds_7_1_percent():
+def test_price_snapshot_adds_service_fee_and_two_percent_currency_cost():
     price = booking_price_snapshot(1000, time(18, 0), time(21, 0))
     assert price == {
         "hourly_rate_cents": 100000,
         "duration_minutes": 180,
         "subtotal_cents": 300000,
-        "service_fee_cents": 21300,
-        "total_cents": 321300,
+        "service_fee_cents": 27726,
+        "currency_conversion_fee_cents": 6426,
+        "total_cents": 327726,
         "musician_earnings_cents": 291000,
         "platform_fee_cents": 18000,
-        "stripe_fee_estimate_cents": 12300,
+        "stripe_fee_estimate_cents": 18726,
         "currency": "mxn",
         "payment_status": "pending",
         "payout_status": "awaiting_payment",
@@ -93,9 +94,10 @@ def test_ten_thousand_peso_distribution_snapshot():
     price = booking_price_snapshot(10000, time(18, 0), time(19, 0))
 
     assert price["subtotal_cents"] == 1_000_000
-    assert price["total_cents"] == 1_071_000
+    assert price["currency_conversion_fee_cents"] == 21_420
+    assert price["total_cents"] == 1_092_420
     assert price["platform_fee_cents"] == 60_000
-    assert price["stripe_fee_estimate_cents"] == 41_000
+    assert price["stripe_fee_estimate_cents"] == 62_420
     assert price["musician_earnings_cents"] == 970_000
     assert (
         price["platform_fee_cents"]
@@ -121,7 +123,7 @@ def test_checkout_charges_frozen_booking_total():
             )
         assert response.status_code == 201
         kwargs = checkout_create.call_args.kwargs
-        assert kwargs["line_items"][0]["price_data"]["unit_amount"] == 321300
+        assert kwargs["line_items"][0]["price_data"]["unit_amount"] == 327726
         assert kwargs["mode"] == "payment"
         assert kwargs["invoice_creation"] == {"enabled": True}
         with SessionLocal() as db:

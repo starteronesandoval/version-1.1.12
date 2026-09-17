@@ -76,8 +76,9 @@ app = FastAPI(
 )
 
 
-CLIENT_PRICE_MULTIPLIER = Decimal("1.071")
+CLIENT_PRICE_MULTIPLIER = Decimal("1.09242")
 CLIENT_SURCHARGE_RATE = Decimal("0.071")
+STRIPE_CURRENCY_CONVERSION_RATE = Decimal("0.02")
 CLIENT_PLATFORM_FEE_RATE = Decimal("0.03")
 MUSICIAN_NET_RATE = Decimal("0.97")
 app.include_router(billing_router)
@@ -273,11 +274,18 @@ def booking_price_snapshot(hourly_rate: float, start_time, end_time) -> dict:
         (Decimal(hourly_rate_cents) * Decimal(duration_minutes) / Decimal(60))
         .quantize(Decimal("1"), rounding=ROUND_HALF_UP)
     )
-    service_fee_cents = int(
+    base_service_fee_cents = int(
         (Decimal(subtotal_cents) * CLIENT_SURCHARGE_RATE).quantize(
             Decimal("1"), rounding=ROUND_HALF_UP
         )
     )
+    currency_conversion_fee_cents = int(
+        (Decimal(subtotal_cents + base_service_fee_cents)
+         * STRIPE_CURRENCY_CONVERSION_RATE).quantize(
+            Decimal("1"), rounding=ROUND_HALF_UP
+        )
+    )
+    service_fee_cents = base_service_fee_cents + currency_conversion_fee_cents
     musician_earnings_cents = int(
         (Decimal(subtotal_cents) * MUSICIAN_NET_RATE).quantize(
             Decimal("1"), rounding=ROUND_HALF_UP
@@ -296,6 +304,7 @@ def booking_price_snapshot(hourly_rate: float, start_time, end_time) -> dict:
         "duration_minutes": duration_minutes,
         "subtotal_cents": subtotal_cents,
         "service_fee_cents": service_fee_cents,
+        "currency_conversion_fee_cents": currency_conversion_fee_cents,
         "total_cents": subtotal_cents + service_fee_cents,
         "musician_earnings_cents": musician_earnings_cents,
         "platform_fee_cents": platform_fee_cents,
@@ -522,6 +531,7 @@ def booking_out(
         duration_minutes=booking.duration_minutes,
         subtotal_cents=booking.subtotal_cents,
         service_fee_cents=booking.service_fee_cents,
+        currency_conversion_fee_cents=booking.currency_conversion_fee_cents,
         total_cents=booking.total_cents,
         musician_earnings_cents=booking.musician_earnings_cents,
         platform_fee_cents=booking.platform_fee_cents,

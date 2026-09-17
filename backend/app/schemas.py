@@ -228,6 +228,7 @@ class BookingResponse(BaseModel):
     duration_minutes: int
     subtotal_cents: int
     service_fee_cents: int
+    currency_conversion_fee_cents: int
     total_cents: int
     musician_earnings_cents: int
     platform_fee_cents: int
