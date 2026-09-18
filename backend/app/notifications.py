@@ -7,15 +7,16 @@ import google.auth.transport.requests
 from google.oauth2 import service_account
 import requests
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
-from sqlalchemy import select
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import selectinload
 
-from .auth import current_user
+from .auth import current_user, require_role
 from .config import settings
 from .database import SessionLocal, get_db
-from .models import PushDelivery, PushDevice, User, UserNotification
+from .models import PushDelivery, PushDevice, User, UserNotification, UserRole
 
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 logger = logging.getLogger(__name__)
@@ -28,6 +29,14 @@ def utcnow():
 class DeviceRegistration(BaseModel):
     installation_id: str = Field(min_length=16, max_length=100)
     token: str = Field(min_length=30, max_length=512)
+
+
+class AdminAnnouncement(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    message_id: str = Field(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    title: str = Field(min_length=3, max_length=120)
+    body: str = Field(min_length=5, max_length=250)
+    recipient_user_id: int | None = Field(default=None, gt=0)
 
 
 def enqueue(db: Session, *, user_id: int, event_key: str, kind: str,
@@ -48,6 +57,60 @@ def enqueue(db: Session, *, user_id: int, event_key: str, kind: str,
         for device in devices:
             db.add(PushDelivery(notification_id=notice.id, device_id=device.id,
                                 next_attempt_at=utcnow()))
+
+
+@router.get("/admin/recipients")
+def admin_recipients(
+    user: User = Depends(require_role(UserRole.admin)),
+    db: Session = Depends(get_db),
+):
+    recipients = db.scalars(select(User).options(
+        selectinload(User.musician_profile), selectinload(User.client_profile),
+    ).where(User.is_active.is_(True)).order_by(User.id)).all()
+    enabled = set(db.scalars(select(PushDevice.user_id).where(
+        PushDevice.enabled.is_(True),
+    )).all())
+    return [{
+        "id": recipient.id,
+        "role": recipient.role.value,
+        "name": (
+            recipient.musician_profile.group_name if recipient.musician_profile else
+            recipient.client_profile.name if recipient.client_profile else
+            "Administrador"
+        ),
+        "email": recipient.email,
+        "push_enabled": recipient.id in enabled,
+    } for recipient in recipients]
+
+
+@router.post("/admin/send", status_code=201)
+def admin_send_announcement(
+    data: AdminAnnouncement,
+    user: User = Depends(require_role(UserRole.admin)),
+    db: Session = Depends(get_db),
+):
+    query = select(User.id).where(User.is_active.is_(True))
+    if data.recipient_user_id is not None:
+        query = query.where(User.id == data.recipient_user_id)
+    recipients = db.scalars(query).all()
+    if not recipients:
+        raise HTTPException(404, "No hay un destinatario activo con ese ID")
+    key = f"admin_announcement:{data.message_id}"
+    existing = db.scalar(select(UserNotification).where(UserNotification.event_key == key))
+    if existing and (existing.title != data.title or existing.body != data.body):
+        raise HTTPException(409, "El identificador de este envío ya se utilizó")
+    for recipient_id in recipients:
+        enqueue(db, user_id=recipient_id, event_key=key, kind="announcement",
+                title=data.title, body=data.body,
+                data={"sender_user_id": str(user.id)})
+    db.commit()
+    return {
+        "recipient_count": len(recipients),
+        "queued_devices": db.scalar(select(func.count(PushDelivery.id))
+            .join(UserNotification, PushDelivery.notification_id == UserNotification.id)
+            .where(UserNotification.event_key == key)) or 0,
+        "push_configured": push_configured(),
+    }
 
 
 @router.put("/devices")

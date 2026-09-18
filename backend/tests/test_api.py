@@ -144,7 +144,7 @@ def test_full_registration_and_search_flow():
         headers=ch,
     )
     assert sold_date.status_code == 200
-    assert sold_date.json()["available"] is False
+    assert sold_date.json()["available"] is True
     musician_notifications = client.get("/api/musicians/me/bookings", headers=mh)
     assert musician_notifications.status_code == 200
     assert musician_notifications.json()[0]["event_date"] == "2099-10-19"

@@ -1259,7 +1259,7 @@ def set_my_busy_date(
     if selected_date < date.today():
         raise HTTPException(422, "No puedes modificar fechas anteriores")
     profile = db.scalar(
-        select(MusicianProfile).where(MusicianProfile.user_id == user.id)
+        select(MusicianProfile).where(MusicianProfile.user_id == user.id).with_for_update()
     )
     if not profile:
         raise HTTPException(409, "Crea primero el perfil de la agrupación")
@@ -1274,6 +1274,7 @@ def set_my_busy_date(
             select(Booking).where(
                 Booking.musician_id == profile.id,
                 Booking.event_date == selected_date,
+                Booking.payment_status == "paid",
             )
         )
         if booking:
@@ -1406,12 +1407,6 @@ def create_booking(
         ),
     )
     db.add(booking)
-    db.add(
-        MusicianBusyDate(
-            musician_id=musician.id,
-            busy_date=data.event_date,
-        )
-    )
     try:
         db.flush()
         enqueue(db, user_id=musician.user_id,

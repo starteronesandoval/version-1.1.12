@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -373,11 +372,17 @@ class _AuthScreenState extends State<AuthScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    body: GlassBackground(
+    body: _LoginBackground(
       child: SafeArea(
-        child: Center(
+        child: Align(
+          alignment: Alignment.bottomCenter,
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(22),
+            padding: EdgeInsets.fromLTRB(
+              22,
+              MediaQuery.sizeOf(context).height * .25,
+              22,
+              22,
+            ),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 460),
               child: GlassCard(
@@ -385,73 +390,6 @@ class _AuthScreenState extends State<AuthScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    SizedBox(
-                      height: 190,
-                      child: Center(
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            ImageFiltered(
-                              imageFilter: ImageFilter.blur(
-                                sigmaX: 12,
-                                sigmaY: 12,
-                              ),
-                              child: Opacity(
-                                opacity: .22,
-                                child: Image.asset(
-                                  'assets/branding/garibaldi_jaguar_login.png',
-                                  width: 310,
-                                  fit: BoxFit.contain,
-                                ),
-                              ),
-                            ),
-                            ShaderMask(
-                              blendMode: BlendMode.dstIn,
-                              shaderCallback:
-                                  (bounds) => const LinearGradient(
-                                    colors: [
-                                      Colors.transparent,
-                                      Colors.white,
-                                      Colors.white,
-                                      Colors.transparent,
-                                    ],
-                                    stops: [0, .16, .84, 1],
-                                  ).createShader(bounds),
-                              child: ShaderMask(
-                                blendMode: BlendMode.dstIn,
-                                shaderCallback:
-                                    (bounds) => const LinearGradient(
-                                      begin: Alignment.topCenter,
-                                      end: Alignment.bottomCenter,
-                                      colors: [
-                                        Colors.transparent,
-                                        Colors.white,
-                                        Colors.white,
-                                        Colors.transparent,
-                                      ],
-                                      stops: [0, .2, .8, 1],
-                                    ).createShader(bounds),
-                                child: ImageFiltered(
-                                  imageFilter: ImageFilter.blur(
-                                    sigmaX: .45,
-                                    sigmaY: .45,
-                                  ),
-                                  child: Opacity(
-                                    opacity: .86,
-                                    child: Image.asset(
-                                      'assets/branding/garibaldi_jaguar_login.png',
-                                      width: 300,
-                                      fit: BoxFit.contain,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
                     Text(
                       registerMode
                           ? '¡Conecta, contrata y disfruta!'
@@ -601,5 +539,35 @@ class _AuthScreenState extends State<AuthScreen> {
         ),
       ),
     ),
+  );
+}
+
+class _LoginBackground extends StatelessWidget {
+  const _LoginBackground({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Stack(
+    fit: StackFit.expand,
+    children: [
+      Image.asset(
+        'assets/branding/garibaldi_login_background.png',
+        fit: BoxFit.cover,
+        alignment: Alignment.topCenter,
+        excludeFromSemantics: true,
+      ),
+      const DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0x08040918), Color(0x33040918), Color(0x80040918)],
+            stops: [0, .45, 1],
+          ),
+        ),
+      ),
+      child,
+    ],
   );
 }

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from .auth import current_user
 from .config import settings
 from .database import get_db
-from .models import (BillingCustomer, Booking, MusicianPayoutDestination,
+from .models import (BillingCustomer, Booking, MusicianBusyDate, MusicianPayoutDestination,
                      MusicianProfile, StripeWebhookEvent, User, UserRole)
 from .notifications import enqueue
 
@@ -228,6 +228,13 @@ def create_checkout_session(
         raise HTTPException(403, "Esta contratación pertenece a otro cliente")
     if booking.payment_status == "paid":
         raise HTTPException(409, "Esta contratación ya está pagada")
+    if booking.payment_status in {"refunded", "refund_pending", "refund_failed"}:
+        raise HTTPException(409, "Este pago tiene un reembolso por conflicto de fecha")
+    if db.scalar(select(MusicianBusyDate.id).where(
+        MusicianBusyDate.musician_id == booking.musician_id,
+        MusicianBusyDate.busy_date == booking.event_date,
+    )):
+        raise HTTPException(409, "La fecha ya no está disponible; no se iniciará otro pago")
     if booking.total_cents <= 0:
         raise HTTPException(409, "La contratación no tiene un total válido")
     if booking.stripe_checkout_session_id:
@@ -324,11 +331,61 @@ def sync_checkout(event_type: str, obj, db: Session) -> None:
     booking = db.get(Booking, int(raw_booking_id))
     if not booking:
         return
+    db.scalar(select(MusicianProfile).where(
+        MusicianProfile.id == booking.musician_id,
+    ).with_for_update())
+    db.refresh(booking)
     session_id = obj.get("id")
     if not session_id or booking.stripe_checkout_session_id != session_id:
         return
     if event_type in {"checkout.session.completed", "checkout.session.async_payment_succeeded"}:
         if obj.get("payment_status") in {"paid", "no_payment_required"}:
+            # Serialize both payment confirmations and manual calendar changes.
+            # Lock the parent even when no busy-date row exists yet.
+            if booking.payment_status in {"paid", "refunded", "refund_pending", "refund_failed"}:
+                return
+            busy = db.scalar(select(MusicianBusyDate).where(
+                MusicianBusyDate.musician_id == booking.musician_id,
+                MusicianBusyDate.busy_date == booking.event_date,
+            ))
+            booking.stripe_payment_intent_id = obj.get("payment_intent")
+            if busy:
+                # Two customers can pay previously opened Checkout pages. Only
+                # the first confirmed payment wins; refund the other in full.
+                # On transport failure the transaction rolls back and Stripe
+                # retries the webhook with the same refund idempotency key.
+                if not booking.stripe_payment_intent_id:
+                    raise HTTPException(409, "El pago en conflicto no tiene PaymentIntent")
+                stripe_client_ready()
+                refund = stripe.Refund.create(
+                    payment_intent=booking.stripe_payment_intent_id,
+                    metadata={"booking_id": str(booking.id), "reason": "date_unavailable"},
+                    idempotency_key=f"balam-booking-{booking.id}-date-conflict-refund-v1",
+                )
+                status = getattr(refund, "status", "pending")
+                booking.payment_status = (
+                    "refunded" if status == "succeeded" else
+                    "refund_failed" if status in {"failed", "canceled"} else "refund_pending"
+                )
+                booking.payout_status = "date_conflict"
+                booking.payout_error = "La fecha ya estaba ocupada al confirmar Stripe el pago"
+                enqueue(db, user_id=booking.client.user_id,
+                        event_key=f"booking_date_conflict:{booking.id}", kind="payment",
+                        title="La fecha ya no está disponible",
+                        body="Otro compromiso se confirmó antes. Tu contratación no fue confirmada; revisa el estado del reembolso con la administración.",
+                        data={"booking_id": str(booking.id)})
+                for admin in db.scalars(select(User).where(
+                    User.role == UserRole.admin, User.is_active.is_(True),
+                )):
+                    enqueue(db, user_id=admin.id,
+                            event_key=f"booking_date_conflict:{booking.id}", kind="payment",
+                            title="Reembolso por conflicto de fecha",
+                            body=f"Contratación #{booking.id}: {booking.payment_status}. La fecha no se confirmó; revisa el reembolso en Stripe.",
+                            data={"booking_id": str(booking.id)})
+                return
+            db.add(MusicianBusyDate(
+                musician_id=booking.musician_id, busy_date=booking.event_date,
+            ))
             first_confirmation = booking.payment_status != "paid"
             booking.payment_status = "paid"
             if booking.payout_status == "awaiting_payment":
@@ -340,9 +397,9 @@ def sync_checkout(event_type: str, obj, db: Session) -> None:
                         title="Contratación confirmada",
                         body="El cliente confirmó y pagó la contratación.",
                         data={"booking_id": str(booking.id)})
-    elif event_type == "checkout.session.async_payment_failed":
+    elif event_type == "checkout.session.async_payment_failed" and booking.payment_status not in {"paid", "refunded", "refund_pending", "refund_failed"}:
         booking.payment_status = "failed"
-    elif event_type == "checkout.session.expired" and booking.payment_status != "paid":
+    elif event_type == "checkout.session.expired" and booking.payment_status not in {"paid", "refunded", "refund_pending", "refund_failed"}:
         booking.payment_status = "expired"
 
 
@@ -494,6 +551,26 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     event_type = event["type"]
     if event_type.startswith("checkout.session."):
         sync_checkout(event["type"], event["data"]["object"], db)
+    elif event_type in {"refund.updated", "refund.failed"}:
+        refund = stripe_object_dict(event["data"]["object"])
+        booking = db.scalar(select(Booking).where(
+            Booking.stripe_payment_intent_id == refund.get("payment_intent"),
+            Booking.payout_status == "date_conflict",
+        ).with_for_update()) if refund.get("payment_intent") else None
+        if booking:
+            status = refund.get("status")
+            if status == "succeeded":
+                booking.payment_status = "refunded"
+            elif status in {"failed", "canceled"}:
+                booking.payment_status = "refund_failed"
+                for admin in db.scalars(select(User).where(
+                    User.role == UserRole.admin, User.is_active.is_(True),
+                )):
+                    enqueue(db, user_id=admin.id,
+                            event_key=f"booking_refund_failed:{booking.id}", kind="payment",
+                            title="Reembolso requiere atención",
+                            body=f"Stripe no pudo completar el reembolso de la contratación #{booking.id}. Revisa el pago en Stripe.",
+                            data={"booking_id": str(booking.id)})
     elif event_type == "account.updated":
         destination = sync_connect_account(event["data"]["object"], db)
         db.flush()

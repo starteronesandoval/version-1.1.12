@@ -1,7 +1,7 @@
 import enum
 from datetime import date, datetime, time, timezone
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, Float, ForeignKey, Integer, Numeric, String, Text, Time, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Enum, Float, ForeignKey, Index, Integer, Numeric, String, Text, Time, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -246,7 +246,11 @@ class ClientProfile(Base):
 
 class Booking(Base):
     __tablename__ = "bookings"
-    __table_args__ = (UniqueConstraint("musician_id", "event_date"),)
+    __table_args__ = (Index(
+        "uq_bookings_paid_date", "musician_id", "event_date", unique=True,
+        postgresql_where=text("payment_status = 'paid'"),
+        sqlite_where=text("payment_status = 'paid'"),
+    ),)
     id: Mapped[int] = mapped_column(primary_key=True)
     musician_id: Mapped[int] = mapped_column(
         ForeignKey("musician_profiles.id"), index=True

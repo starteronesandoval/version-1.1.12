@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../widgets/notification_inbox.dart';
+import '../widgets/admin_messenger.dart';
 
 import '../api_service.dart';
 import '../widgets/booking_chat_sheet.dart';
@@ -409,7 +410,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   @override
   Widget build(BuildContext context) => DefaultTabController(
-    length: 5,
+    length: 6,
     child: Scaffold(
       appBar: AppBar(
         title: const Text('Panel administrativo'),
@@ -428,6 +429,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             Tab(icon: Icon(Icons.groups_outlined), text: 'Agrupaciones'),
             Tab(icon: Icon(Icons.receipt_long_outlined), text: 'Contratos'),
             Tab(icon: Icon(Icons.gavel_outlined), text: 'Disputas'),
+            Tab(icon: Icon(Icons.campaign_outlined), text: 'Mensajes'),
             Tab(
               icon: const Icon(Icons.workspace_premium_outlined),
               text: 'Platino (${platinumRequests.length})',
@@ -463,6 +465,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                               .toList(),
                       disputesOnly: true,
                     ),
+                    AdminMessenger(api: widget.api),
                     records(
                       platinumRequests,
                       'No hay solicitudes Platino pendientes',

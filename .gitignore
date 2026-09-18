@@ -7,6 +7,7 @@ backend/.env
 .cloudflared/
 cloudflare/*.json
 cloudflare/*.pem
+cloudflare/config.yml
 backend/*.db
 backend/uploads/
 backend/test_uploads/

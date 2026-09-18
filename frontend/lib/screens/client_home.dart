@@ -1138,8 +1138,8 @@ class _ClientHomeState extends State<ClientHome> {
                             icon: const Icon(Icons.check_circle_outline),
                             label: Text(
                               booking
-                                  ? 'Confirmando…'
-                                  : 'Confirmar contratación',
+                                  ? 'Preparando solicitud…'
+                                  : 'Continuar al pago',
                             ),
                           ),
                         ],
@@ -1165,7 +1165,7 @@ class _ClientHomeState extends State<ClientHome> {
                                 ),
                                 const SizedBox(height: 8),
                                 const Text(
-                                  'Contratación creada',
+                                  'Solicitud pendiente de pago',
                                   style: TextStyle(
                                     fontSize: 20,
                                     fontWeight: FontWeight.w800,
@@ -1173,7 +1173,7 @@ class _ClientHomeState extends State<ClientHome> {
                                 ),
                                 const SizedBox(height: 6),
                                 Text(
-                                  'Completa el pago de ${band['group_name']} en Stripe.',
+                                  'La fecha sigue disponible. Se confirmará cuando Stripe valide el pago de ${band['group_name']}.',
                                   textAlign: TextAlign.center,
                                 ),
                                 const SizedBox(height: 12),
