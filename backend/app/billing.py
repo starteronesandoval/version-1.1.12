@@ -153,7 +153,7 @@ def create_connect_onboarding(
     try:
         if not destination.stripe_connected_account_id:
             account = stripe.Account.create(
-                type="express",
+                type="standard",
                 country="MX",
                 email=user.email,
                 capabilities={"transfers": {"requested": True}},
@@ -161,7 +161,7 @@ def create_connect_onboarding(
                     "balam_musician_id": str(profile.id),
                     "balam_user_id": str(user.id),
                 },
-                idempotency_key=f"balam-musician-{profile.id}-connect-v1",
+                idempotency_key=f"balam-musician-{profile.id}-connect-standard-v1",
             )
             destination.stripe_connected_account_id = account.id
             sync_connect_account(account, db)

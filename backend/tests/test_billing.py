@@ -557,7 +557,7 @@ def test_connect_onboarding_is_available_before_first_paid_contract():
             "requirements": {"currently_due": ["external_account"]},
         },
     )
-    with patch("app.billing.stripe.Account.create", return_value=created_account), \
+    with patch("app.billing.stripe.Account.create", return_value=created_account) as create_account, \
             patch(
                 "app.billing.stripe.AccountLink.create",
                 return_value=SimpleNamespace(url="https://connect.test/setup", expires_at=1),
@@ -566,6 +566,25 @@ def test_connect_onboarding_is_available_before_first_paid_contract():
             "/api/billing/connect/onboarding", headers=musician_headers, json={},
         )
     assert saved.status_code == 201
+    assert create_account.call_args.kwargs["type"] == "standard"
+    assert create_account.call_args.kwargs["idempotency_key"] == (
+        f"balam-musician-{musician_id}-connect-standard-v1"
+    )
+    # An existing Express destination is resumed, never replaced by Standard.
+    existing_account = {
+        **created_account.to_dict_recursive(), "type": "express",
+    }
+    with patch("app.billing.stripe.Account.create") as create_again, \
+            patch("app.billing.stripe.Account.retrieve", return_value=existing_account), \
+            patch("app.billing.stripe.AccountLink.create", return_value=SimpleNamespace(
+                url="https://connect.test/resume", expires_at=2,
+            )) as create_link:
+        resumed = client.post(
+            "/api/billing/connect/onboarding", headers=musician_headers, json={},
+        )
+    assert resumed.status_code == 201
+    create_again.assert_not_called()
+    assert create_link.call_args.kwargs["account"] == "acct_early_setup"
     with patch(
         "app.billing.stripe.Account.retrieve",
         side_effect=stripe.error.APIConnectionError("Stripe sin conexión"),
