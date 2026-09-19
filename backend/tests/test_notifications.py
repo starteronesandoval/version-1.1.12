@@ -52,8 +52,9 @@ def test_admin_can_notify_one_user_or_every_active_user_with_push():
         admin = User(email="admin-messages@example.com", password_hash="unused", role=UserRole.admin)
         musician = User(email="band-messages@example.com", password_hash="unused", role=UserRole.musician)
         customer = User(email="client-messages@example.com", password_hash="unused", role=UserRole.client)
+        incomplete = User(email="incomplete-messages@example.com", password_hash="unused", role=UserRole.musician)
         inactive = User(email="inactive-messages@example.com", password_hash="unused", role=UserRole.client, is_active=False)
-        db.add_all([admin, musician, customer, inactive])
+        db.add_all([admin, musician, customer, incomplete, inactive])
         db.flush()
         db.add(MusicianProfile(user_id=musician.id, contact_name="Ana", group_name="Infranqueable",
                 group_type="Banda", musical_style="Regional", member_count=5,
@@ -61,13 +62,18 @@ def test_admin_can_notify_one_user_or_every_active_user_with_push():
         db.add(ClientProfile(user_id=customer.id, name="Cliente", admin_phone="8111111111",
                              city="Monterrey", municipality="Monterrey", state="Nuevo León"))
         db.commit()
-        admin_id, musician_id, customer_id, inactive_id = admin.id, musician.id, customer.id, inactive.id
+        admin_id, musician_id, customer_id, incomplete_id, inactive_id = (
+            admin.id, musician.id, customer.id, incomplete.id, inactive.id
+        )
         admin_headers = {"Authorization": f"Bearer {create_token(admin)}"}
         musician_headers = {"Authorization": f"Bearer {create_token(musician)}"}
     recipients = client.get("/api/notifications/admin/recipients", headers=admin_headers)
     assert recipients.status_code == 200
-    assert {entry["id"] for entry in recipients.json()} == {admin_id, musician_id, customer_id}
+    assert {entry["id"] for entry in recipients.json()} == {
+        admin_id, musician_id, customer_id, incomplete_id,
+    }
     assert next(entry for entry in recipients.json() if entry["id"] == musician_id)["name"] == "Infranqueable"
+    assert next(entry for entry in recipients.json() if entry["id"] == incomplete_id)["name"] == "Músico sin perfil"
     assert client.get("/api/notifications/admin/recipients", headers=musician_headers).status_code == 403
     client.put("/api/notifications/devices", headers=musician_headers,
                json={"installation_id": "z" * 32, "token": "t" * 100})
@@ -89,9 +95,11 @@ def test_admin_can_notify_one_user_or_every_active_user_with_push():
                  "body": "Bienvenidos a Garibaldi."}
     result = client.post("/api/notifications/admin/send", headers=admin_headers, json=broadcast)
     assert result.status_code == 201
-    assert result.json()["recipient_count"] == 3
+    assert result.json()["recipient_count"] == 4
     with SessionLocal() as db:
         notices = db.scalars(select(UserNotification).where(
             UserNotification.event_key == "admin_announcement:broadcast-message-0001")).all()
-        assert {notice.user_id for notice in notices} == {admin_id, musician_id, customer_id}
+        assert {notice.user_id for notice in notices} == {
+            admin_id, musician_id, customer_id, incomplete_id,
+        }
         assert not db.scalars(select(UserNotification).where(UserNotification.user_id == inactive_id)).all()

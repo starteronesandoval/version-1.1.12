@@ -76,7 +76,9 @@ def admin_recipients(
         "name": (
             recipient.musician_profile.group_name if recipient.musician_profile else
             recipient.client_profile.name if recipient.client_profile else
-            "Administrador"
+            "Administrador" if recipient.role == UserRole.admin else
+            "Músico sin perfil" if recipient.role == UserRole.musician else
+            "Cliente sin perfil"
         ),
         "email": recipient.email,
         "push_enabled": recipient.id in enabled,
