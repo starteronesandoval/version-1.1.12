@@ -43,6 +43,9 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
       'musical_style',
       'member_count',
       'hourly_rate',
+      'local_hourly_rate',
+      'low_season_hourly_rate',
+      'low_season_dates',
       'minimum_booking_hours',
       'subwoofer_count',
       'mid_speaker_count',
@@ -512,6 +515,8 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
   bool numeric(String key) => const {
     'member_count',
     'hourly_rate',
+    'local_hourly_rate',
+    'low_season_hourly_rate',
     'minimum_booking_hours',
     'subwoofer_count',
     'mid_speaker_count',
@@ -529,7 +534,10 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
         'group_type': 'Tipo de grupo',
         'musical_style': 'Corriente musical',
         'member_count': 'Cantidad de integrantes',
-        'hourly_rate': 'Costo por hora',
+        'hourly_rate': 'Costo normal por hora',
+        'local_hourly_rate': 'Costo local por hora (opcional)',
+        'low_season_hourly_rate': 'Costo por hora en temporada baja (opcional)',
+        'low_season_dates': 'Fechas de temporada baja (AAAA-MM-DD, separadas por coma)',
         'minimum_booking_hours': 'Contrato mínimo (horas)',
         'subwoofer_count': 'Subwoofers',
         'mid_speaker_count': 'Bocinas de medios',
@@ -545,15 +553,25 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
       final saved =
           await widget.api.put('/api/musicians/me', {
                 for (final entry in fields.entries)
-                  if (entry.key != 'admin_phone' ||
+                  if ((entry.key != 'admin_phone' &&
+                          entry.key != 'local_hourly_rate' &&
+                          entry.key != 'low_season_hourly_rate') ||
                       entry.value.text.trim().isNotEmpty)
                     entry.key:
                         numeric(entry.key)
-                            ? (entry.key == 'hourly_rate'
+                            ? ((entry.key == 'hourly_rate' ||
+                                    entry.key == 'local_hourly_rate' ||
+                                    entry.key == 'low_season_hourly_rate')
                                 ? double.parse(entry.value.text)
                                 : int.parse(entry.value.text))
                             : entry.key == 'equipment_brands'
                             ? entry.value.text.split(',')
+                            : entry.key == 'low_season_dates'
+                            ? entry.value.text
+                                .split(',')
+                                .map((value) => value.trim())
+                                .where((value) => value.isNotEmpty)
+                                .toList()
                             : entry.value.text,
                 'includes_sound': sound,
                 'card_theme': cardTheme,

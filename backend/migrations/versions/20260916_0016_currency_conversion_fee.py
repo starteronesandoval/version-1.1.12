@@ -20,7 +20,10 @@ def upgrade() -> None:
         sa.Column("currency_conversion_fee_cents", sa.Integer(), nullable=False,
                   server_default="0"),
     )
-    op.alter_column("bookings", "currency_conversion_fee_cents", server_default=None)
+    # SQLite cannot DROP DEFAULT with ALTER COLUMN. Keeping the database
+    # default is harmless and makes a fresh local database installable.
+    if op.get_bind().dialect.name != "sqlite":
+        op.alter_column("bookings", "currency_conversion_fee_cents", server_default=None)
 
 
 def downgrade() -> None:

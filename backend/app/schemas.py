@@ -117,6 +117,9 @@ class MusicianProfileUpsert(BaseModel):
     )
     member_count: int = Field(ge=1, le=100)
     hourly_rate: float = Field(ge=0)
+    local_hourly_rate: float | None = Field(default=None, ge=0)
+    low_season_hourly_rate: float | None = Field(default=None, ge=0)
+    low_season_dates: list[date] = Field(default_factory=list)
     minimum_booking_hours: int = Field(default=2, ge=1, le=12)
     includes_sound: bool = False
     subwoofer_count: int = Field(default=0, ge=0, le=100)
@@ -225,6 +228,7 @@ class BookingResponse(BaseModel):
     start_time: time
     end_time: time
     hourly_rate_cents: int
+    price_type: str
     duration_minutes: int
     subtotal_cents: int
     service_fee_cents: int

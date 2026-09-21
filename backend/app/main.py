@@ -68,6 +68,10 @@ from .schemas import (AdminPayoutAction, AvailabilityResponse, AvatarChoiceUpdat
 settings.upload_dir.mkdir(parents=True, exist_ok=True)
 mimetypes.add_type("application/vnd.android.package-archive", ".apk")
 
+# Android emulators reach the host through 10.0.2.2. Keep this local bridge
+# available even when the Docker production allow-list is used on the same PC.
+allowed_hosts = list(dict.fromkeys([*settings.allowed_hosts, "10.0.2.2"]))
+
 app = FastAPI(
     title=settings.app_name,
     version="0.2.0",
@@ -85,7 +89,7 @@ app.include_router(billing_router)
 app.include_router(social_router)
 app.include_router(notifications_router)
 app.include_router(platinum_router)
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -259,6 +263,23 @@ def values(raw: str) -> list[str]:
         return json.loads(raw or "[]")
     except json.JSONDecodeError:
         return []
+
+
+def selected_hourly_rate(
+    musician: MusicianProfile, client: ClientProfile, event_date: date
+) -> tuple[float, str]:
+    """Select the contract rate; low season always wins over locality."""
+    try:
+        low_season_dates = {date.fromisoformat(value) for value in values(musician.low_season_dates)}
+    except ValueError:
+        low_season_dates = set()
+    if musician.low_season_hourly_rate is not None and event_date in low_season_dates:
+        return float(musician.low_season_hourly_rate), "low_season"
+    musician_places = {value.strip().casefold() for value in (musician.city, musician.municipality) if value}
+    client_places = {value.strip().casefold() for value in (client.city, client.municipality) if value}
+    if musician.local_hourly_rate is not None and musician_places.intersection(client_places):
+        return float(musician.local_hourly_rate), "local"
+    return float(musician.hourly_rate), "normal"
 
 
 def booking_price_snapshot(hourly_rate: float, start_time, end_time) -> dict:
@@ -457,10 +478,18 @@ def musician_out(
 ) -> MusicianProfileResponse:
     choice = profile.user.avatar_choice
     hourly_rate = Decimal(str(profile.hourly_rate))
+    local_hourly_rate = (Decimal(str(profile.local_hourly_rate))
+                         if profile.local_hourly_rate is not None else None)
+    low_season_hourly_rate = (Decimal(str(profile.low_season_hourly_rate))
+                              if profile.low_season_hourly_rate is not None else None)
     if customer_price:
         hourly_rate = (hourly_rate * CLIENT_PRICE_MULTIPLIER).quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP
         )
+        local_hourly_rate = ((local_hourly_rate * CLIENT_PRICE_MULTIPLIER).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP) if local_hourly_rate is not None else None)
+        low_season_hourly_rate = ((low_season_hourly_rate * CLIENT_PRICE_MULTIPLIER).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP) if low_season_hourly_rate is not None else None)
     return MusicianProfileResponse(
         id=profile.id, user_id=profile.user_id, contact_name=profile.contact_name,
         city=profile.city, municipality=profile.municipality, state=profile.state,
@@ -468,6 +497,10 @@ def musician_out(
         musical_style=profile.musical_style, card_theme=profile.card_theme,
         member_count=profile.member_count,
         hourly_rate=float(hourly_rate),
+        local_hourly_rate=float(local_hourly_rate) if local_hourly_rate is not None else None,
+        low_season_hourly_rate=(float(low_season_hourly_rate)
+                                 if low_season_hourly_rate is not None else None),
+        low_season_dates=[date.fromisoformat(item) for item in values(profile.low_season_dates)],
         minimum_booking_hours=profile.minimum_booking_hours,
         includes_sound=profile.includes_sound,
         subwoofer_count=profile.subwoofer_count, mid_speaker_count=profile.mid_speaker_count,
@@ -528,6 +561,7 @@ def booking_out(
         start_time=booking.start_time,
         end_time=booking.end_time,
         hourly_rate_cents=booking.hourly_rate_cents,
+        price_type=booking.price_type,
         duration_minutes=booking.duration_minutes,
         subtotal_cents=booking.subtotal_cents,
         service_fee_cents=booking.service_fee_cents,
@@ -1063,7 +1097,8 @@ def upsert_musician(data: MusicianProfileUpsert, user: User = Depends(require_ro
     if not all((data.city, data.municipality, data.state)):
         raise HTTPException(422, "Completa ciudad, municipio y estado")
     admin_phone = normalize_phone(data.admin_phone) if data.admin_phone else None
-    payload = data.model_dump(exclude={"equipment_brands", "admin_phone"}); payload["equipment_brands"] = csv(data.equipment_brands)
+    payload = data.model_dump(exclude={"equipment_brands", "admin_phone", "low_season_dates"}); payload["equipment_brands"] = csv(data.equipment_brands)
+    payload["low_season_dates"] = json.dumps([item.isoformat() for item in data.low_season_dates])
     if admin_phone:
         payload["admin_phone"] = admin_phone
     if profile:
@@ -1395,6 +1430,7 @@ def create_booking(
             f"Esta agrupación acepta contratos a partir de "
             f"{musician.minimum_booking_hours} horas",
         )
+    hourly_rate, price_type = selected_hourly_rate(musician, client, data.event_date)
     booking = Booking(
         musician_id=musician.id,
         client_id=client.id,
@@ -1402,8 +1438,9 @@ def create_booking(
         venue=data.venue.strip(),
         start_time=data.start_time,
         end_time=data.end_time,
+        price_type=price_type,
         **booking_price_snapshot(
-            musician.hourly_rate, data.start_time, data.end_time
+            hourly_rate, data.start_time, data.end_time
         ),
     )
     db.add(booking)

@@ -86,15 +86,21 @@ class _BalamAppState extends State<BalamApp> {
   }
 
   void _signedIn(String value) {
+    // A Google credential or a notification may leave a transient route open.
+    // Close it before replacing the app's root content so inherited widgets
+    // are not deactivated while a dependent route is still mounted.
+    navigatorKey.currentState?.popUntil((route) => route.isFirst);
     setState(() {
       role = value;
       startupError = null;
     });
     if (widget.api == null) notifications.activate();
   }
+
   Future<void> _logout() async {
     if (widget.api == null) await notifications.deactivate();
     await api.logout();
+    navigatorKey.currentState?.popUntil((route) => route.isFirst);
     if (mounted) {
       setState(() {
         role = null;
@@ -174,17 +180,26 @@ class _BalamAppState extends State<BalamApp> {
         ),
       ),
     ),
-    home:
+    home: KeyedSubtree(
+      key: ValueKey(
         loading
-            ? const GaribaldiSplash()
+            ? 'loading'
             : startupError != null
-            ? _startupFailure()
-            : role == null
-            ? AuthScreen(api: api, onSignedIn: _signedIn)
-            : role == 'admin'
-            ? AdminDashboardScreen(api: api, onLogout: _logout)
-            : role == 'musician'
-            ? MusicianProfileScreen(api: api, onLogout: _logout)
-            : ClientHome(api: api, onLogout: _logout),
+            ? 'error'
+            : role ?? 'auth',
+      ),
+      child:
+          loading
+              ? const GaribaldiSplash()
+              : startupError != null
+              ? _startupFailure()
+              : role == null
+              ? AuthScreen(api: api, onSignedIn: _signedIn)
+              : role == 'admin'
+              ? AdminDashboardScreen(api: api, onLogout: _logout)
+              : role == 'musician'
+              ? MusicianProfileScreen(api: api, onLogout: _logout)
+              : ClientHome(api: api, onLogout: _logout),
+    ),
   );
 }
