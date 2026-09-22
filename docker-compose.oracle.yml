@@ -9,6 +9,7 @@ services:
       TRUST_CLOUDFLARE_HEADERS: "true"
     volumes:
       - ${FCM_CREDENTIALS_HOST_PATH:?Define FCM_CREDENTIALS_HOST_PATH}:/run/secrets/firebase-service-account.json:ro
+      - ${RELEASES_HOST_PATH:?Define RELEASES_HOST_PATH}:/data/releases:ro
 
   cloudflared:
     image: cloudflare/cloudflared:latest

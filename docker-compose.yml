@@ -53,6 +53,7 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - uploads_data:/data/uploads
+      - releases_data:/data/releases:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -67,3 +68,4 @@ services:
 volumes:
   postgres_data:
   uploads_data:
+  releases_data:

@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     secret_key: str = "development-only-secret-key-change-me"
     access_token_minutes: int = Field(default=60, ge=5, le=10080)
     upload_dir: Path = Path("uploads")
+    release_download_dir: Path = Path("releases")
     event_timezone: str = "America/Mexico_City"
     payout_auto_release_hours: int = Field(default=2, ge=2, le=2)
     payout_release_scan_seconds: int = Field(default=60, ge=10, le=3600)

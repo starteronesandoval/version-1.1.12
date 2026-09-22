@@ -781,13 +781,13 @@ def health(db: Session = Depends(get_db)):
 
 @app.get("/downloads/garibaldi.apk", include_in_schema=False)
 def download_local_android_build():
-    apk = settings.upload_dir / "Garibaldi-red-local.apk"
+    apk = settings.release_download_dir / "garibaldi.apk"
     if not apk.is_file():
-        raise HTTPException(404, "La APK local todavía no está disponible")
+        raise HTTPException(404, "La APK actual todavía no está disponible")
     return FileResponse(
         apk,
         media_type="application/vnd.android.package-archive",
-        filename="Garibaldi-red-local.apk",
+        filename="Garibaldi.apk",
     )
 
 
