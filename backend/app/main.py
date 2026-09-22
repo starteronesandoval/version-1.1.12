@@ -152,10 +152,63 @@ async def automatic_payout_release_loop() -> None:
 async def push_delivery_loop() -> None:
     while True:
         try:
+            await asyncio.to_thread(enqueue_monthly_low_season_reminders)
+            await asyncio.to_thread(enqueue_payment_validation_reminders)
             await asyncio.to_thread(dispatch_pending)
         except Exception:
             logger.exception("Falló el envío de avisos")
         await asyncio.sleep(settings.push_scan_seconds)
+
+
+def enqueue_monthly_low_season_reminders() -> None:
+    """Prompt active musicians on the first local day of each eligible month."""
+    today = datetime.now(ZoneInfo(settings.event_timezone)).date()
+    if today.day != 1 or today.month in {5, 12}:
+        return
+    month_key = today.strftime("%Y-%m")
+    with SessionLocal() as db:
+        musician_ids = db.scalars(select(User.id).where(
+            User.role == UserRole.musician, User.is_active.is_(True)
+        )).all()
+        for user_id in musician_ids:
+            enqueue(
+                db,
+                user_id=user_id,
+                event_key=f"low_season_offer:{month_key}",
+                kind="pricing",
+                title="Programa ofertas de temporada baja",
+                body=("¿Quieres ofrecer precio especial este mes? Puedes elegir "
+                      "lunes a jueves o fechas específicas."),
+                data={"month": month_key, "action": "low_season_pricing"},
+            )
+        db.commit()
+
+
+def enqueue_payment_validation_reminders() -> None:
+    """Notify a client once when Stripe has not confirmed after one hour."""
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
+    with SessionLocal() as db:
+        pending = db.scalars(
+            select(Booking).where(
+                Booking.payment_status == "validating_payment",
+                Booking.payment_validation_started_at.is_not(None),
+                Booking.payment_validation_started_at <= cutoff,
+            )
+        ).all()
+        for booking in pending:
+            enqueue(
+                db,
+                user_id=booking.client.user_id,
+                event_key=f"payment_validation_oxxo:{booking.id}",
+                kind="payment",
+                title="Tu pago sigue en validación",
+                body=(
+                    "Stripe aún no confirma tu pago. Si necesitas intentarlo de "
+                    "nuevo, te recomendamos elegir pago en efectivo en OXXO."
+                ),
+                data={"booking_id": str(booking.id), "action": "payment_oxxo"},
+            )
+        db.commit()
 
 
 @app.on_event("startup")
@@ -1373,22 +1426,62 @@ def musician_availability(
     profile = db.get(MusicianProfile, musician_id)
     if not profile:
         raise HTTPException(404, "Agrupación no encontrada")
+    client = db.scalar(
+        select(ClientProfile).where(ClientProfile.user_id == user.id)
+    )
+    validating_booking = db.scalar(
+        select(Booking).where(
+            Booking.musician_id == musician_id,
+            Booking.event_date == selected_date,
+            Booking.payment_status == "validating_payment",
+        )
+    )
     busy = db.scalar(
         select(MusicianBusyDate).where(
             MusicianBusyDate.musician_id == musician_id,
             MusicianBusyDate.busy_date == selected_date,
         )
     )
-    available = busy is None
-    message = (
-        "La agrupación está disponible en esta fecha."
-        if available
-        else "Lo sentimos, el grupo ya tiene compromiso ese día."
+    reserved_by_current_user = bool(
+        validating_booking and validating_booking.client.user_id == user.id
     )
+    available = busy is None and validating_booking is None
+    if reserved_by_current_user:
+        message = (
+            "Estamos validando tu pago. Esta fecha ya está apartada por usted; "
+            "favor de verificar unos minutos más para confirmar la contratación."
+        )
+    elif validating_booking:
+        message = "La fecha está apartada temporalmente mientras se valida un pago."
+    elif available:
+        message = "La agrupación está disponible en esta fecha."
+    else:
+        message = "Lo sentimos, el grupo ya tiene compromiso ese día."
+    price_type = "normal"
+    hourly_rate = float(profile.hourly_rate)
+    price_message = None
+    if client:
+        hourly_rate, price_type = selected_hourly_rate(
+            profile, client, selected_date
+        )
+        if price_type == "low_season":
+            price_message = (
+                "Este grupo ofrece un precio especial de temporada baja "
+                "para esta fecha."
+            )
+        elif price_type == "local":
+            price_message = (
+                "Este grupo ofrece precio local porque tu ciudad o municipio "
+                "coincide con el de la agrupación."
+            )
     return AvailabilityResponse(
         date=selected_date,
         available=available,
         message=message,
+        price_type=price_type,
+        hourly_rate=hourly_rate,
+        price_message=price_message,
+        reserved_by_current_user=reserved_by_current_user,
     )
 
 
@@ -1419,6 +1512,18 @@ def create_booking(
     if busy:
         raise HTTPException(
             409, "Lo sentimos, el grupo ya tiene compromiso ese día."
+        )
+    validating_booking = db.scalar(
+        select(Booking.id).where(
+            Booking.musician_id == musician.id,
+            Booking.event_date == data.event_date,
+            Booking.payment_status == "validating_payment",
+        )
+    )
+    if validating_booking:
+        raise HTTPException(
+            409,
+            "La fecha está apartada temporalmente mientras se valida un pago",
         )
     start_minutes = data.start_time.hour * 60 + data.start_time.minute
     end_minutes = data.end_time.hour * 60 + data.end_time.minute

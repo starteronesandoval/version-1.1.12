@@ -52,10 +52,13 @@ def connect_refresh():
     return connect_return_page(complete=False)
 
 
-def checkout_return_page(*, paid: bool) -> HTMLResponse:
-    if paid:
-        title = "Pago completado"
-        message = "Tu pago fue procesado. Ya puedes volver a Balam."
+def checkout_return_page(*, validating: bool) -> HTMLResponse:
+    if validating:
+        title = "Estamos validando tu pago"
+        message = (
+            "Esta fecha ya está apartada por usted. Favor de verificar unos "
+            "minutos más para confirmar que la contratación es efectiva."
+        )
         destination = "balam://billing/success"
     else:
         title = "Pago cancelado"
@@ -84,12 +87,12 @@ def checkout_success(session_id: str | None = None, db: Session = Depends(get_db
             db.commit()
         except stripe.error.StripeError:
             db.rollback()
-    return checkout_return_page(paid=True)
+    return checkout_return_page(validating=True)
 
 
 @router.get("/checkout/cancel", response_class=HTMLResponse)
 def checkout_cancel():
-    return checkout_return_page(paid=False)
+    return checkout_return_page(validating=False)
 
 
 def stripe_client_ready() -> None:
@@ -235,6 +238,19 @@ def create_checkout_session(
         MusicianBusyDate.busy_date == booking.event_date,
     )):
         raise HTTPException(409, "La fecha ya no está disponible; no se iniciará otro pago")
+    validating_booking = db.scalar(
+        select(Booking.id).where(
+            Booking.musician_id == booking.musician_id,
+            Booking.event_date == booking.event_date,
+            Booking.payment_status == "validating_payment",
+            Booking.id != booking.id,
+        )
+    )
+    if validating_booking:
+        raise HTTPException(
+            409,
+            "La fecha está apartada temporalmente mientras se valida otro pago",
+        )
     if booking.total_cents <= 0:
         raise HTTPException(409, "La contratación no tiene un total válido")
     if booking.stripe_checkout_session_id:
@@ -388,6 +404,7 @@ def sync_checkout(event_type: str, obj, db: Session) -> None:
             ))
             first_confirmation = booking.payment_status != "paid"
             booking.payment_status = "paid"
+            booking.payment_validation_started_at = None
             if booking.payout_status == "awaiting_payment":
                 booking.payout_status = "musician_funds_held"
             booking.stripe_payment_intent_id = obj.get("payment_intent")
@@ -397,10 +414,22 @@ def sync_checkout(event_type: str, obj, db: Session) -> None:
                         title="Contratación confirmada",
                         body="El cliente confirmó y pagó la contratación.",
                         data={"booking_id": str(booking.id)})
+        elif event_type == "checkout.session.completed" and booking.payment_status not in {
+            "paid", "refunded", "refund_pending", "refund_failed",
+        }:
+            # El cliente terminó Checkout, pero Stripe todavía no confirma el
+            # cobro (por ejemplo, métodos de pago asíncronos). No se agrega la
+            # fecha al calendario hasta recibir la confirmación definitiva.
+            booking.payment_status = "validating_payment"
+            booking.payment_validation_started_at = datetime.now(
+                timezone.utc
+            ).replace(tzinfo=None)
     elif event_type == "checkout.session.async_payment_failed" and booking.payment_status not in {"paid", "refunded", "refund_pending", "refund_failed"}:
         booking.payment_status = "failed"
+        booking.payment_validation_started_at = None
     elif event_type == "checkout.session.expired" and booking.payment_status not in {"paid", "refunded", "refund_pending", "refund_failed"}:
         booking.payment_status = "expired"
+        booking.payment_validation_started_at = None
 
 
 def release_musician_funds(booking_id: int, db: Session) -> bool:

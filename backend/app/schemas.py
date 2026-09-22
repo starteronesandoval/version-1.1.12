@@ -128,6 +128,15 @@ class MusicianProfileUpsert(BaseModel):
     audience_capacity: int = Field(default=0, ge=0)
     description: str = Field(default="", max_length=2000)
 
+    @model_validator(mode="after")
+    def validate_low_season_dates(self):
+        for selected_date in self.low_season_dates:
+            if selected_date.month in {5, 12}:
+                raise ValueError("Mayo y diciembre no pueden programarse como temporada baja")
+            if selected_date.weekday() >= 4:
+                raise ValueError("La temporada baja sólo puede aplicarse de lunes a jueves")
+        return self
+
 
 class MediaResponse(BaseModel):
     id: int
@@ -200,6 +209,10 @@ class AvailabilityResponse(BaseModel):
     date: date
     available: bool
     message: str
+    price_type: str = "normal"
+    hourly_rate: float | None = None
+    price_message: str | None = None
+    reserved_by_current_user: bool = False
 
 
 class BookingCreate(BaseModel):

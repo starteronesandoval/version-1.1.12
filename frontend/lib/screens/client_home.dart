@@ -736,8 +736,12 @@ class _ClientHomeState extends State<ClientHome> {
                       : endMinutes - startMinutes;
               final minimumMinutes =
                   ((band['minimum_booking_hours'] as num?)?.toInt() ?? 2) * 60;
-              final hourlyRateCents =
-                  ((band['hourly_rate'] as num).toDouble() * 100).round();
+              final selectedHourlyRate =
+                  (availability?['hourly_rate'] as num?)?.toDouble() ??
+                  (band['hourly_rate'] as num).toDouble();
+              final hourlyRateCents = (selectedHourlyRate * 100).round();
+              final priceType = availability?['price_type']?.toString();
+              final priceMessage = availability?['price_message']?.toString();
               final subtotalCents =
                   durationMinutes != null && durationMinutes > 0
                       ? (hourlyRateCents * durationMinutes / 60).round()
@@ -894,6 +898,38 @@ class _ClientHomeState extends State<ClientHome> {
                                   availability!['message'].toString(),
                                   textAlign: TextAlign.center,
                                 ),
+                                if (available && priceMessage != null) ...[
+                                  const SizedBox(height: 12),
+                                  Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: const Color(
+                                        0xFFFFC857,
+                                      ).withValues(alpha: .14),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          priceType == 'low_season'
+                                              ? Icons.local_offer_outlined
+                                              : Icons.location_city_outlined,
+                                          color: const Color(0xFFFFC857),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          child: Text(
+                                            priceMessage,
+                                            textAlign: TextAlign.center,
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                               ],
                             ),
                           ),
@@ -1173,7 +1209,7 @@ class _ClientHomeState extends State<ClientHome> {
                                 ),
                                 const SizedBox(height: 6),
                                 Text(
-                                  'La fecha sigue disponible. Se confirmará cuando Stripe valide el pago de ${band['group_name']}.',
+                                  'Tu contrato quedó creado. Al terminar el pago, Stripe validará la contratación y apartará la fecha para ti.',
                                   textAlign: TextAlign.center,
                                 ),
                                 const SizedBox(height: 12),
@@ -1354,6 +1390,9 @@ class _ClientHomeState extends State<ClientHome> {
                                 Text(
                                   item['payment_status'] == 'paid'
                                       ? 'Pago confirmado'
+                                      : item['payment_status'] ==
+                                          'validating_payment'
+                                      ? 'Estamos validando tu pago. Esta fecha ya está apartada por ti; verifica de nuevo en unos minutos.'
                                       : 'Pago pendiente · Total \$${((item['total_cents'] as num) / 100).toStringAsFixed(2)} MXN',
                                   style: TextStyle(
                                     color:
@@ -1363,7 +1402,9 @@ class _ClientHomeState extends State<ClientHome> {
                                     fontWeight: FontWeight.w700,
                                   ),
                                 ),
-                                if (item['payment_status'] != 'paid') ...[
+                                if (item['payment_status'] != 'paid' &&
+                                    item['payment_status'] !=
+                                        'validating_payment') ...[
                                   const SizedBox(height: 8),
                                   FilledButton.icon(
                                     onPressed: () async {

@@ -1,0 +1,19 @@
+services:
+  api:
+    # La API no publica puertos en Oracle: sólo Cloudflare Tunnel puede verla.
+    ports: !reset []
+    environment:
+      FCM_PROJECT_ID: ${FCM_PROJECT_ID:?Define FCM_PROJECT_ID}
+      FCM_CREDENTIALS_FILE: /run/secrets/firebase-service-account.json
+      FORWARDED_ALLOW_IPS: "*"
+      TRUST_CLOUDFLARE_HEADERS: "true"
+    volumes:
+      - ${FCM_CREDENTIALS_HOST_PATH:?Define FCM_CREDENTIALS_HOST_PATH}:/run/secrets/firebase-service-account.json:ro
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?Define CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped

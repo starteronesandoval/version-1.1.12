@@ -279,6 +279,9 @@ class Booking(Base):
     payment_status: Mapped[str] = mapped_column(
         String(30), default="pending", index=True
     )
+    payment_validation_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True
+    )
     stripe_checkout_session_id: Mapped[str | None] = mapped_column(
         String(255), nullable=True, unique=True
     )

@@ -537,7 +537,8 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
         'hourly_rate': 'Costo normal por hora',
         'local_hourly_rate': 'Costo local por hora (opcional)',
         'low_season_hourly_rate': 'Costo por hora en temporada baja (opcional)',
-        'low_season_dates': 'Fechas de temporada baja (AAAA-MM-DD, separadas por coma)',
+        'low_season_dates':
+            'Fechas de temporada baja (AAAA-MM-DD, separadas por coma)',
         'minimum_booking_hours': 'Contrato mínimo (horas)',
         'subwoofer_count': 'Subwoofers',
         'mid_speaker_count': 'Bocinas de medios',
@@ -545,6 +546,76 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
         'audience_capacity': 'Capacidad de público',
         'description': 'Historia y descripción',
       }[key]!;
+
+  bool _isEligibleLowSeasonDate(DateTime value) =>
+      value.month != DateTime.may &&
+      value.month != DateTime.december &&
+      value.weekday <= DateTime.thursday;
+
+  DateTime _nextEligibleLowSeasonDate(DateTime value) {
+    var candidate = DateTime(value.year, value.month, value.day);
+    while (!_isEligibleLowSeasonDate(candidate)) {
+      candidate = candidate.add(const Duration(days: 1));
+    }
+    return candidate;
+  }
+
+  List<DateTime> _lowSeasonDates() =>
+      fields['low_season_dates']!.text
+          .split(',')
+          .map((value) => DateTime.tryParse(value.trim()))
+          .whereType<DateTime>()
+          .toList();
+
+  void _setLowSeasonDates(Iterable<DateTime> dates) {
+    final sorted =
+        dates
+            .where(_isEligibleLowSeasonDate)
+            .map((value) => DateTime(value.year, value.month, value.day))
+            .toSet()
+            .toList()
+          ..sort();
+    fields['low_season_dates']!.text = sorted
+        .map((value) => value.toIso8601String().substring(0, 10))
+        .join(', ');
+    setState(() {});
+  }
+
+  Future<void> _addSpecificLowSeasonDate() async {
+    final now = DateTime.now();
+    final selected = await showDatePicker(
+      context: context,
+      firstDate: DateTime(now.year, now.month, now.day),
+      lastDate: DateTime(now.year + 1, 12, 31),
+      initialDate: _nextEligibleLowSeasonDate(now),
+      selectableDayPredicate: _isEligibleLowSeasonDate,
+      helpText: 'Elige un lunes, martes, miércoles o jueves',
+    );
+    if (selected != null) _setLowSeasonDates([..._lowSeasonDates(), selected]);
+  }
+
+  Future<void> _addMonthWeekdays() async {
+    final now = DateTime.now();
+    final selected = await showDatePicker(
+      context: context,
+      firstDate: DateTime(now.year, now.month, now.day),
+      lastDate: DateTime(now.year + 1, 12, 31),
+      initialDate: _nextEligibleLowSeasonDate(now),
+      selectableDayPredicate: _isEligibleLowSeasonDate,
+      helpText: 'Elige cualquier día del mes a programar',
+    );
+    if (selected == null) return;
+    final first = DateTime(selected.year, selected.month);
+    final weekdays = <DateTime>[];
+    for (
+      var day = first;
+      day.month == first.month;
+      day = day.add(const Duration(days: 1))
+    ) {
+      if (_isEligibleLowSeasonDate(day)) weekdays.add(day);
+    }
+    _setLowSeasonDates([..._lowSeasonDates(), ...weekdays]);
+  }
 
   Future<void> save() async {
     if (!form.currentState!.validate()) return;
@@ -1451,12 +1522,46 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
                       (value) =>
                           value == null ||
                                   value.trim().isEmpty &&
-                                      (entry.key != 'admin_phone' ||
-                                          profile?['admin_phone_saved'] != true)
+                                      (entry.key != 'admin_phone' &&
+                                              entry.key !=
+                                                  'local_hourly_rate' &&
+                                              entry.key !=
+                                                  'low_season_hourly_rate' &&
+                                              entry.key != 'low_season_dates' ||
+                                          (entry.key == 'admin_phone' &&
+                                              profile?['admin_phone_saved'] !=
+                                                  true))
                               ? 'Campo obligatorio'
                               : null,
                 ),
                 const SizedBox(height: 13),
+                if (entry.key == 'low_season_dates') ...[
+                  Text(
+                    'No se permiten viernes, sábados, domingos, mayo ni diciembre.',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: .65),
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _addMonthWeekdays,
+                        icon: const Icon(Icons.date_range_outlined),
+                        label: const Text('Lunes a jueves del mes'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _addSpecificLowSeasonDate,
+                        icon: const Icon(Icons.add_circle_outline),
+                        label: const Text('Agregar fecha'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 13),
+                ],
                 if (entry.key == 'group_type') ...[
                   const Text(
                     'Tema visual de tu agrupación',

@@ -4,6 +4,9 @@ __pycache__/
 .pytest_cache/
 backend/.venv/
 backend/.env
+.env
+/secrets/
+/backups/
 .cloudflared/
 cloudflare/*.json
 cloudflare/*.pem
