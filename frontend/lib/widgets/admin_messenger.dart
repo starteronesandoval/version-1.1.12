@@ -63,85 +63,11 @@ class _AdminMessengerState extends State<AdminMessenger> {
   }
 
   Future<void> _chooseRecipient() async {
-    final search = TextEditingController();
     final chosen = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
-      builder:
-          (sheetContext) => SafeArea(
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(
-                16,
-                20,
-                16,
-                MediaQuery.viewInsetsOf(sheetContext).bottom + 16,
-              ),
-              child: SizedBox(
-                height: MediaQuery.sizeOf(sheetContext).height * .65,
-                child: Column(
-                  children: [
-                    const Text(
-                      'Elegir destinatario',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: search,
-                      autofocus: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Buscar por nombre o correo',
-                        prefixIcon: Icon(Icons.search),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Expanded(
-                      child: AnimatedBuilder(
-                        animation: search,
-                        builder: (context, _) {
-                          final query = search.text.trim().toLowerCase();
-                          final matches =
-                              recipients
-                                  .where(
-                                    (recipient) => _recipientLabel(
-                                      recipient,
-                                    ).toLowerCase().contains(query),
-                                  )
-                                  .toList();
-                          return ListView.builder(
-                            itemCount: matches.length,
-                            itemBuilder: (context, index) {
-                              final recipient = matches[index];
-                              return ListTile(
-                                title: Text(
-                                  recipient['name']?.toString() ?? 'Usuario',
-                                ),
-                                subtitle: Text(
-                                  recipient['email']?.toString() ?? '',
-                                ),
-                                trailing: Icon(
-                                  recipient['push_enabled'] == true
-                                      ? Icons.notifications_active_outlined
-                                      : Icons.notifications_off_outlined,
-                                ),
-                                onTap:
-                                    () =>
-                                        Navigator.pop(sheetContext, recipient),
-                              );
-                            },
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
+      builder: (_) => _RecipientPicker(recipients: recipients),
     );
-    search.dispose();
     if (chosen != null && mounted) {
       setState(() {
         selected = chosen;
@@ -327,4 +253,83 @@ class _AdminMessengerState extends State<AdminMessenger> {
       ],
     ),
   );
+}
+
+class _RecipientPicker extends StatefulWidget {
+  const _RecipientPicker({required this.recipients});
+
+  final List<Map<String, dynamic>> recipients;
+
+  @override
+  State<_RecipientPicker> createState() => _RecipientPickerState();
+}
+
+class _RecipientPickerState extends State<_RecipientPicker> {
+  final search = TextEditingController();
+
+  @override
+  void dispose() {
+    search.dispose();
+    super.dispose();
+  }
+
+  String _label(Map<String, dynamic> recipient) {
+    final name = recipient['name']?.toString() ?? 'Usuario';
+    final email = recipient['email']?.toString() ?? '';
+    return '$name · $email';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final query = search.text.trim().toLowerCase();
+    final matches = widget.recipients
+        .where((recipient) => _label(recipient).toLowerCase().contains(query))
+        .toList();
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          16,
+          20,
+          16,
+          MediaQuery.viewInsetsOf(context).bottom + 16,
+        ),
+        child: SizedBox(
+          height: MediaQuery.sizeOf(context).height * .65,
+          child: Column(
+            children: [
+              const Text('Elegir destinatario',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              TextField(
+                controller: search,
+                autofocus: true,
+                onChanged: (_) => setState(() {}),
+                decoration: const InputDecoration(
+                  labelText: 'Buscar por nombre o correo',
+                  prefixIcon: Icon(Icons.search),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: matches.length,
+                  itemBuilder: (context, index) {
+                    final recipient = matches[index];
+                    return ListTile(
+                      title: Text(recipient['name']?.toString() ?? 'Usuario'),
+                      subtitle: Text(recipient['email']?.toString() ?? ''),
+                      trailing: Icon(recipient['push_enabled'] == true
+                          ? Icons.notifications_active_outlined
+                          : Icons.notifications_off_outlined),
+                      onTap: () => Navigator.of(context).pop(recipient),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
