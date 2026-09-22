@@ -189,7 +189,10 @@ def send_fcm(token: str, notice: UserNotification) -> str:
         "data": {"notification_id": str(notice.id), "kind": notice.kind,
                  **json.loads(notice.data_json)},
         "android": {"priority": "HIGH", "notification": {
-            "channel_id": "garibaldi_alerts", "sound": "default",
+            # Android channel settings control heads-up presentation.  This
+            # versioned channel avoids devices that retained the previous
+            # channel with a user/system-created silent importance level.
+            "channel_id": "garibaldi_alerts_v2", "sound": "default",
             "notification_priority": "PRIORITY_HIGH", "visibility": "PRIVATE",
             "tag": str(notice.id)}},
     }}

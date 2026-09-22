@@ -11,6 +11,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'api_service.dart';
 import 'widgets/notification_inbox.dart';
 
+// Android does not allow an app to raise the importance of an existing channel.
+// Keep this value in sync with AndroidManifest.xml and notifications.py.  The
+// versioned channel restores heads-up alerts for installations that first
+// created the old channel as silent.
+const _alertChannelId = 'garibaldi_alerts_v2';
+const _alertChannelName = 'Avisos urgentes de Garibaldi';
+const _alertChannelDescription =
+    'Mensajes, contrataciones, pagos y actividad social';
+
 @pragma('vm:entry-point')
 Future<void> garibaldiBackgroundMessage(RemoteMessage message) async {
   await Firebase.initializeApp();
@@ -44,9 +53,9 @@ class GaribaldiNotifications {
         await local.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>()?.createNotificationChannel(
             const AndroidNotificationChannel(
-              'garibaldi_alerts', 'Avisos de Garibaldi',
-              description: 'Contrataciones, mensajes, pagos y actividad social',
-              importance: Importance.max,
+              _alertChannelId, _alertChannelName,
+              description: _alertChannelDescription,
+              importance: Importance.high,
               playSound: true,
               enableVibration: true,
             ),
@@ -68,11 +77,13 @@ class GaribaldiNotifications {
           random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
         await prefs.setString('garibaldi_installation_id', _installationId!);
       }
-      if (prefs.getBool('garibaldi_notification_permission_asked') != true) {
+      final notificationSettings =
+          await FirebaseMessaging.instance.getNotificationSettings();
+      if (notificationSettings.authorizationStatus != AuthorizationStatus.authorized &&
+          notificationSettings.authorizationStatus != AuthorizationStatus.provisional) {
         await FirebaseMessaging.instance.requestPermission(
           alert: true, badge: true, sound: true,
         );
-        await prefs.setBool('garibaldi_notification_permission_asked', true);
       }
       final token = await FirebaseMessaging.instance.getToken();
       if (token != null) await _registerToken(token);
@@ -101,8 +112,8 @@ class GaribaldiNotifications {
       body: notification.body,
       notificationDetails: const NotificationDetails(
         android: AndroidNotificationDetails(
-          'garibaldi_alerts', 'Avisos de Garibaldi',
-          channelDescription: 'Contrataciones, mensajes, pagos y actividad social',
+          _alertChannelId, _alertChannelName,
+          channelDescription: _alertChannelDescription,
           importance: Importance.max,
           priority: Priority.high,
           playSound: true,
