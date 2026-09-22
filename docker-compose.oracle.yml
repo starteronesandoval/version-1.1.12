@@ -12,8 +12,11 @@ services:
 
   cloudflared:
     image: cloudflare/cloudflared:latest
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?Define CLOUDFLARE_TUNNEL_TOKEN}
+    command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
     depends_on:
       api:
         condition: service_healthy
     restart: unless-stopped
+    volumes:
+      - ${CLOUDFLARE_CONFIG_HOST_PATH:?Define CLOUDFLARE_CONFIG_HOST_PATH}:/etc/cloudflared/config.yml:ro
+      - ${CLOUDFLARE_CREDENTIALS_HOST_PATH:?Define CLOUDFLARE_CREDENTIALS_HOST_PATH}:/etc/cloudflared/credentials.json:ro
