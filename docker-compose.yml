@@ -48,6 +48,7 @@ services:
       MAX_REQUEST_BODY_BYTES: ${MAX_REQUEST_BODY_BYTES:-2097152}
       MAX_STRIPE_WEBHOOK_BYTES: ${MAX_STRIPE_WEBHOOK_BYTES:-1048576}
       UPLOAD_DIR: /data/uploads
+      RELEASE_DOWNLOAD_DIR: /data/releases
     ports:
       # El origen solo es accesible desde esta PC; Cloudflare Tunnel es la entrada pública.
       - "127.0.0.1:8000:8000"
