@@ -10,11 +10,25 @@ os.environ["SECRET_KEY"] = "test-only-secret-key-with-at-least-32-characters"
 os.environ["EXPOSE_PASSWORD_RESET_CODE"] = "true"
 
 from fastapi.testclient import TestClient
-from app.database import Base, engine
+from sqlalchemy import select
+from app.database import Base, SessionLocal, engine
+from app.models import (
+    Booking, ClientProfile, MusicianBusyDate, MusicianProfile, User, UserRole,
+)
 from app.main import app
 from app.config import settings
 
 client = TestClient(app)
+
+
+def _auth_headers(email: str, role: str) -> dict[str, str]:
+    response = client.post("/api/auth/register", json={
+        "email": email,
+        "password": "segura123",
+        "role": role,
+    })
+    assert response.status_code == 201
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
 def setup_module():
@@ -179,6 +193,8 @@ def test_full_registration_and_search_flow():
             json={"text": "Sí, la agregamos al repertorio."},
         )
         assert reply.status_code == 201
+
+
         full_chat = client.get(f"/api/bookings/{booking_id}/messages", headers=ch)
         assert len(full_chat.json()) == 2
         assert full_chat.json()[1]["sender_name"] == "Los del Valle"
@@ -561,3 +577,194 @@ def test_password_reset_code_is_not_returned_when_delivery_is_configured():
     assert response.status_code == 200
     assert "dev_code" not in response.json()
     deliver.assert_called_once()
+
+
+def test_surprise_group_is_opt_in_matched_and_hidden_until_payment():
+    musician_headers = _auth_headers("sorpresa-musico@example.com", "musician")
+    assert client.post(
+        "/api/musicians/me/rules/accept", headers=musician_headers
+    ).status_code == 200
+    profile = client.put("/api/musicians/me", headers=musician_headers, json={
+        "contact_name": "Sofía", "admin_phone": "8111111199",
+        "city": "Monterrey", "municipality": "Monterrey",
+        "state": "Nuevo León", "group_name": "Norteños Secretos",
+        "group_type": "Norteño", "musical_style": "Norteño tradicional",
+        "member_count": 5, "hourly_rate": 2500,
+        "minimum_booking_hours": 3, "includes_sound": True,
+        "subwoofer_count": 2, "mid_speaker_count": 2,
+        "equipment_brands": ["JBL"], "audience_capacity": 300,
+        "description": "Agrupación participante",
+        "surprise_group_enabled": True,
+        "base_latitude": 25.6866,
+        "base_longitude": -100.3161,
+    })
+    assert profile.status_code == 200
+    assert profile.json()["surprise_group_enabled"] is True
+    assert profile.json()["radio_servicio_sorpresa_km"] == 30
+
+    client_headers = _auth_headers("sorpresa-cliente@example.com", "client")
+    assert client.put("/api/clients/me", headers=client_headers, json={
+        "name": "Cliente Sorpresa", "admin_phone": "8122222299",
+        "city": "Monterrey", "municipality": "Monterrey",
+        "state": "Nuevo León", "musical_tastes": ["Norteño"],
+        "favorite_groups": [],
+    }).status_code == 200
+
+    common = {
+        "genre": "Norteño", "max_hourly_rate": 3000,
+        "event_date": "2099-11-20", "venue": "Salón Sorpresa, Monterrey",
+        "start_time": "18:00", "surprise_notice_accepted": True,
+        "event_city": "Monterrey", "event_municipality": "Monterrey",
+        "event_state": "Nuevo León",
+    }
+    too_short = client.post(
+        "/api/bookings/surprise", headers=client_headers,
+        json={**common, "end_time": "20:00"},
+    )
+    assert too_short.status_code == 422
+
+    booking = client.post(
+        "/api/bookings/surprise", headers=client_headers,
+        json={**common, "end_time": "22:00"},
+    )
+    assert booking.status_code == 201, booking.text
+    payload = booking.json()
+    assert payload["booking_type"] == "surprise"
+    assert payload["group_name"] == "Grupo Sorpresa"
+    assert payload["musician_id"] is None
+    assert payload["surprise_revealed"] is False
+    assert payload["hourly_rate_cents"] == 250000
+    assert payload["subtotal_cents"] == 1_000_000
+    assert payload["distancia_evento_km"] is not None
+    assert payload["distancia_evento_km"] <= 30
+
+    hidden = client.get("/api/musicians/me/bookings", headers=musician_headers)
+    assert hidden.status_code == 200
+    assert all(item["id"] != payload["id"] for item in hidden.json())
+
+    with SessionLocal() as db:
+        saved = db.get(Booking, payload["id"])
+        saved.payment_status = "paid"
+        saved.surprise_revealed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        db.commit()
+
+    revealed = client.get("/api/clients/me/bookings", headers=client_headers)
+    assert revealed.status_code == 200
+    surprise = next(item for item in revealed.json() if item["id"] == payload["id"])
+    assert surprise["group_name"] == "Norteños Secretos"
+    assert surprise["musician_id"] == profile.json()["id"]
+    assert surprise["surprise_revealed"] is True
+
+
+def test_surprise_simulation_considers_every_eligible_group_and_reserves_one():
+    """End-to-end matching simulation with two clients and mixed group data."""
+    first_headers = _auth_headers("simulacion-cliente-1@example.com", "client")
+    second_headers = _auth_headers("simulacion-cliente-2@example.com", "client")
+    event_day = date(2099, 12, 15)
+    with SessionLocal() as db:
+        clients = db.scalars(
+            select(User).where(User.email.in_((
+                "simulacion-cliente-1@example.com", "simulacion-cliente-2@example.com",
+            )))
+        ).all()
+        client_profiles = []
+        for user in clients:
+            profile = ClientProfile(
+                user_id=user.id, name=user.email, admin_phone="8111111111",
+                city="Monterrey", municipality="Monterrey", state="Nuevo León",
+            )
+            db.add(profile)
+            client_profiles.append(profile)
+
+        def add_group(name, *, enabled=True, group_type="Norteño", style="Norteño",
+                      city="Monterrey", state="Nuevo León", rate=2500, minimum=3,
+                      latitude=25.6866, longitude=-100.3161, radio=30):
+            user = User(
+                email=f"simulacion-{name.lower().replace(' ', '-')}@example.com",
+                password_hash="unused", role=UserRole.musician,
+            )
+            db.add(user)
+            db.flush()
+            profile = MusicianProfile(
+                user_id=user.id, contact_name=name, group_name=name,
+                group_type=group_type, musical_style=style, member_count=5,
+                hourly_rate=rate, city=city, municipality=city, state=state,
+                minimum_booking_hours=minimum, surprise_group_enabled=enabled,
+                base_latitude=latitude, base_longitude=longitude,
+                radio_servicio_sorpresa_km=radio,
+                equipment_brands="[]", description="Grupo de simulación",
+            )
+            db.add(profile)
+            return profile
+
+        eligible_a = add_group("Elegible A", rate=3000)
+        # Its textual locality differs from the client, but its base is in
+        # range; geographic matching must still include it.
+        eligible_b = add_group("Elegible B", rate=2500, city="Guadalajara")
+        excluded = [
+            add_group("Sin registro", enabled=False),
+            add_group("Otro genero", group_type="Mariachi", style="Mariachi clásico"),
+            add_group("Fuera de radio", city="Guadalajara", latitude=20.6597, longitude=-103.3496),
+            add_group("Fuera presupuesto", rate=3001),
+            add_group("Demasiado barato", rate=2499),
+            add_group("Requiere cuatro horas", minimum=4),
+        ]
+        busy = add_group("Ocupado")
+        committed = add_group("Ya pagado")
+        db.flush()
+        db.add(MusicianBusyDate(musician_id=busy.id, busy_date=event_day))
+        db.add(Booking(
+            musician_id=committed.id, client_id=client_profiles[0].id,
+            event_date=event_day, venue="Salón", start_time=datetime.strptime("18:00", "%H:%M").time(),
+            end_time=datetime.strptime("21:00", "%H:%M").time(), payment_status="paid",
+        ))
+        db.commit()
+        expected_ids = {eligible_a.id, eligible_b.id}
+        excluded_ids = {profile.id for profile in excluded} | {busy.id, committed.id}
+
+    request = {
+        "genre": "Norteño", "max_hourly_rate": 3000,
+        "event_date": event_day.isoformat(), "venue": "Salón de pruebas",
+        "start_time": "18:00", "end_time": "21:00", "surprise_notice_accepted": True,
+        "event_city": "Monterrey", "event_municipality": "Monterrey",
+        "event_state": "Nuevo León",
+    }
+    first_candidates = []
+    def choose_first(candidates):
+        first_candidates.append({item[0].id for item in candidates})
+        return candidates[0]
+    with patch("app.main.secrets.choice", side_effect=choose_first):
+        first = client.post("/api/bookings/surprise", headers=first_headers, json=request)
+    assert first.status_code == 201, first.text
+    assert expected_ids <= first_candidates[0]
+    assert not first_candidates[0].intersection(excluded_ids)
+    first_booking_id = first.json()["id"]
+    with SessionLocal() as db:
+        selected_id = db.get(Booking, first_booking_id).musician_id
+
+    previous_key = settings.stripe_secret_key
+    settings.stripe_secret_key = "sk_test_simulation"
+    try:
+        with patch("app.billing.stripe.Customer.create", return_value=type("Customer", (), {"id": "cus_sim"})()), patch(
+            "app.billing.stripe.checkout.Session.create",
+            return_value=type("Checkout", (), {"id": "cs_sim", "url": "https://checkout.test"})(),
+        ):
+            checkout = client.post(
+                "/api/billing/checkout-sessions", headers=first_headers,
+                json={"booking_id": first_booking_id},
+            )
+        assert checkout.status_code == 201, checkout.text
+    finally:
+        settings.stripe_secret_key = previous_key
+
+    second_candidates = []
+    def choose_second(candidates):
+        second_candidates.append({item[0].id for item in candidates})
+        return candidates[0]
+    with patch("app.main.secrets.choice", side_effect=choose_second):
+        second = client.post("/api/bookings/surprise", headers=second_headers, json=request)
+    assert second.status_code == 201, second.text
+    # The first choice is reserved at checkout, so only the other eligible
+    # group remains for the next client.
+    assert selected_id not in second_candidates[0]
+    assert expected_ids - {selected_id} <= second_candidates[0]

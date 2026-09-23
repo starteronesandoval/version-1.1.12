@@ -223,7 +223,6 @@ def create_checkout_session(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    stripe_client_ready()
     booking = db.get(Booking, data.booking_id)
     if not booking:
         raise HTTPException(404, "Contratación no encontrada")
@@ -233,20 +232,32 @@ def create_checkout_session(
         raise HTTPException(409, "Esta contratación ya está pagada")
     if booking.payment_status in {"refunded", "refund_pending", "refund_failed"}:
         raise HTTPException(409, "Este pago tiene un reembolso por conflicto de fecha")
+
+    stripe_client_ready()
+
+    # Serialize checkout creation for this group.  The partial unique index is
+    # the durable second line of defence when multiple API replicas receive
+    # requests at exactly the same time.
+    db.scalar(
+        select(MusicianProfile)
+        .where(MusicianProfile.id == booking.musician_id)
+        .with_for_update()
+    )
     if db.scalar(select(MusicianBusyDate.id).where(
         MusicianBusyDate.musician_id == booking.musician_id,
         MusicianBusyDate.busy_date == booking.event_date,
     )):
         raise HTTPException(409, "La fecha ya no está disponible; no se iniciará otro pago")
-    validating_booking = db.scalar(
+    reserved_booking = db.scalar(
         select(Booking.id).where(
             Booking.musician_id == booking.musician_id,
             Booking.event_date == booking.event_date,
-            Booking.payment_status == "validating_payment",
+            Booking.booking_type == "surprise",
+            Booking.payment_status.in_(("checkout_created", "validating_payment", "paid")),
             Booking.id != booking.id,
         )
     )
-    if validating_booking:
+    if reserved_booking:
         raise HTTPException(
             409,
             "La fecha está apartada temporalmente mientras se valida otro pago",
@@ -271,16 +282,36 @@ def create_checkout_session(
                 stripe.checkout.Session.expire(previous.id)
         except stripe.error.StripeError:
             pass
+
+    # Persist the reservation before calling Stripe.  Without this commit a
+    # second request handled by another API instance could create a second
+    # checkout for the same surprise group and date.
+    if booking.booking_type == "surprise":
+        booking.payment_status = "checkout_created"
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(
+                409,
+                "Otro cliente acaba de apartar este Grupo Sorpresa para esa fecha",
+            )
+
     customer = customer_for(user, db)
-    session = stripe.checkout.Session.create(
-        mode="payment",
-        customer=customer.stripe_customer_id,
-        line_items=[{
+    try:
+        session = stripe.checkout.Session.create(
+            mode="payment",
+            customer=customer.stripe_customer_id,
+            line_items=[{
             "price_data": {
                 "currency": booking.currency,
                 "unit_amount": booking.total_cents,
                 "product_data": {
-                    "name": f"Contratación de {booking.musician.group_name}",
+                    "name": (
+                        "Grupo Sorpresa Garibaldy"
+                        if booking.booking_type == "surprise"
+                        else f"Contratación de {booking.musician.group_name}"
+                    ),
                     "description": (
                         f"{booking.duration_minutes / 60:g} horas · "
                         f"evento {booking.event_date.isoformat()}"
@@ -293,13 +324,24 @@ def create_checkout_session(
         cancel_url=settings.billing_cancel_url,
         client_reference_id=str(booking.id),
         metadata={"balam_user_id": str(user.id), "booking_id": str(booking.id)},
-        payment_intent_data={
-            "metadata": {"balam_user_id": str(user.id), "booking_id": str(booking.id)},
-            "transfer_group": f"balam_booking_{booking.id}",
-        },
-        invoice_creation={"enabled": True},
-        billing_address_collection="required",
-    )
+            payment_intent_data={
+                "metadata": {"balam_user_id": str(user.id), "booking_id": str(booking.id)},
+                "transfer_group": f"balam_booking_{booking.id}",
+            },
+            invoice_creation={"enabled": True},
+            billing_address_collection="required",
+            # A surprise group is inventory: it must return to the matching
+            # pool promptly when the client leaves Checkout without paying.
+            # Stripe accepts 30 minutes as its minimum session duration.
+            **({
+                "expires_at": int((datetime.now(timezone.utc) + timedelta(minutes=30)).timestamp()),
+            } if booking.booking_type == "surprise" else {}),
+        )
+    except stripe.error.StripeError:
+        if booking.booking_type == "surprise" and not booking.stripe_checkout_session_id:
+            booking.payment_status = "pending"
+            db.commit()
+        raise
     booking.stripe_checkout_session_id = session.id
     booking.payment_status = "checkout_created"
     db.commit()
@@ -405,10 +447,20 @@ def sync_checkout(event_type: str, obj, db: Session) -> None:
             first_confirmation = booking.payment_status != "paid"
             booking.payment_status = "paid"
             booking.payment_validation_started_at = None
+            if booking.booking_type == "surprise" and booking.surprise_revealed_at is None:
+                booking.surprise_revealed_at = datetime.now(
+                    timezone.utc
+                ).replace(tzinfo=None)
             if booking.payout_status == "awaiting_payment":
                 booking.payout_status = "musician_funds_held"
             booking.stripe_payment_intent_id = obj.get("payment_intent")
             if first_confirmation:
+                if booking.booking_type == "surprise":
+                    enqueue(db, user_id=booking.client.user_id,
+                            event_key=f"surprise_revealed:{booking.id}", kind="booking",
+                            title="¡Tu Grupo Sorpresa está listo!",
+                            body=f"Tu agrupación es {booking.musician.group_name}. Ya puedes consultar el contrato.",
+                            data={"booking_id": str(booking.id)})
                 enqueue(db, user_id=booking.musician.user_id,
                         event_key=f"booking_paid:{booking.id}", kind="booking",
                         title="Contratación confirmada",

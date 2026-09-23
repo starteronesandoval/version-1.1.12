@@ -168,6 +168,10 @@ class MusicianProfile(Base):
     equipment_brands: Mapped[str] = mapped_column(Text, default="")
     audience_capacity: Mapped[int] = mapped_column(Integer, default=0)
     description: Mapped[str] = mapped_column(Text, default="")
+    surprise_group_enabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    base_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    base_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    radio_servicio_sorpresa_km: Mapped[int] = mapped_column(Integer, default=30)
     user: Mapped[User] = relationship(back_populates="musician_profile")
     media: Mapped[list["Media"]] = relationship(back_populates="musician", cascade="all, delete-orphan")
     platinum_certificate: Mapped["PlatinumCertificate | None"] = relationship(
@@ -236,6 +240,8 @@ class ClientProfile(Base):
     city: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     municipality: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     state: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    location_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    location_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     musical_tastes: Mapped[str] = mapped_column(Text, default="")
     favorite_groups: Mapped[str] = mapped_column(Text, default="")
     user: Mapped[User] = relationship(back_populates="client_profile")
@@ -253,6 +259,19 @@ class Booking(Base):
         "uq_bookings_paid_date", "musician_id", "event_date", unique=True,
         postgresql_where=text("payment_status = 'paid'"),
         sqlite_where=text("payment_status = 'paid'"),
+    ), Index(
+        # A surprise booking reserves its selected group as soon as checkout
+        # begins.  This is deliberately narrower than normal bookings, which
+        # may still coexist as unpaid quotes for the same day.
+        "uq_surprise_bookings_reserved_date", "musician_id", "event_date", unique=True,
+        postgresql_where=text(
+            "booking_type = 'surprise' AND payment_status IN "
+            "('checkout_created', 'validating_payment', 'paid')"
+        ),
+        sqlite_where=text(
+            "booking_type = 'surprise' AND payment_status IN "
+            "('checkout_created', 'validating_payment', 'paid')"
+        ),
     ),)
     id: Mapped[int] = mapped_column(primary_key=True)
     musician_id: Mapped[int] = mapped_column(
@@ -267,6 +286,13 @@ class Booking(Base):
     end_time: Mapped[time] = mapped_column(Time)
     hourly_rate_cents: Mapped[int] = mapped_column(Integer, default=0)
     price_type: Mapped[str] = mapped_column(String(20), default="normal")
+    booking_type: Mapped[str] = mapped_column(String(20), default="normal", index=True)
+    surprise_genre: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    surprise_budget_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    surprise_revealed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    event_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    event_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    surprise_distance_km: Mapped[float | None] = mapped_column(Float, nullable=True)
     duration_minutes: Mapped[int] = mapped_column(Integer, default=0)
     subtotal_cents: Mapped[int] = mapped_column(Integer, default=0)
     service_fee_cents: Mapped[int] = mapped_column(Integer, default=0)

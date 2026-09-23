@@ -95,6 +95,8 @@ class ClientProfileResponse(ClientProfileUpsert):
     avatar_mode: str = "photo"
     profile_complete: bool = False
     admin_phone_saved: bool = False
+    location_latitude: float | None = None
+    location_longitude: float | None = None
 
 
 class AvatarChoiceUpdate(BaseModel):
@@ -127,6 +129,12 @@ class MusicianProfileUpsert(BaseModel):
     equipment_brands: list[str] = Field(default_factory=list)
     audience_capacity: int = Field(default=0, ge=0)
     description: str = Field(default="", max_length=2000)
+    # Optional on writes so older APKs cannot disable a musician's choice when
+    # they save an otherwise unrelated profile change.
+    surprise_group_enabled: bool | None = None
+    base_latitude: float | None = Field(default=None, ge=-90, le=90)
+    base_longitude: float | None = Field(default=None, ge=-180, le=180)
+    radio_servicio_sorpresa_km: int = Field(default=30, ge=1, le=30)
 
     @model_validator(mode="after")
     def validate_low_season_dates(self):
@@ -135,6 +143,14 @@ class MusicianProfileUpsert(BaseModel):
                 raise ValueError("Mayo y diciembre no pueden programarse como temporada baja")
             if selected_date.weekday() >= 4:
                 raise ValueError("La temporada baja sólo puede aplicarse de lunes a jueves")
+        return self
+
+    @model_validator(mode="after")
+    def validate_surprise_location(self):
+        has_latitude = self.base_latitude is not None
+        has_longitude = self.base_longitude is not None
+        if has_latitude != has_longitude:
+            raise ValueError("Captura latitud y longitud de la base de la agrupación")
         return self
 
 
@@ -167,6 +183,7 @@ class MusicianProfileResponse(MusicianProfileUpsert):
     platinum_certificate: PlatinumResponse | None = None
     profile_complete: bool = False
     admin_phone_saved: bool = False
+    surprise_group_enabled: bool = False
 
 
 class PayoutDestinationUpsert(BaseModel):
@@ -221,17 +238,56 @@ class BookingCreate(BaseModel):
     venue: str = Field(min_length=3, max_length=300)
     start_time: time
     end_time: time
+    event_latitude: float | None = Field(default=None, ge=-90, le=90)
+    event_longitude: float | None = Field(default=None, ge=-180, le=180)
 
     @model_validator(mode="after")
     def validate_schedule(self):
         if self.end_time <= self.start_time:
             raise ValueError("El horario final debe ser posterior al horario de inicio")
+        if (self.event_latitude is None) != (self.event_longitude is None):
+            raise ValueError("Captura latitud y longitud del evento juntas")
+        return self
+
+
+class SurpriseBookingCreate(BaseModel):
+    genre: str = Field(min_length=2, max_length=100)
+    max_hourly_rate: float = Field(gt=0, le=1_000_000)
+    event_date: date
+    venue: str = Field(min_length=3, max_length=300)
+    start_time: time
+    end_time: time
+    surprise_notice_accepted: bool
+    # Kept for backwards compatibility with older clients.  The current app
+    # sends the human-friendly city, municipality and state fields below.
+    event_latitude: float | None = Field(default=None, ge=-90, le=90)
+    event_longitude: float | None = Field(default=None, ge=-180, le=180)
+    event_city: str | None = Field(default=None, min_length=2, max_length=120)
+    event_municipality: str | None = Field(default=None, min_length=2, max_length=120)
+    event_state: str | None = Field(default=None, min_length=2, max_length=120)
+
+    @model_validator(mode="after")
+    def validate_surprise(self):
+        if self.end_time <= self.start_time:
+            raise ValueError("El horario final debe ser posterior al horario de inicio")
+        start = self.start_time.hour * 60 + self.start_time.minute
+        end = self.end_time.hour * 60 + self.end_time.minute
+        if end - start < 180:
+            raise ValueError("Grupo Sorpresa requiere una duración mínima de 3 horas")
+        if not self.surprise_notice_accepted:
+            raise ValueError("Debes aceptar el aviso de la modalidad sorpresa")
+        if (self.event_latitude is None) != (self.event_longitude is None):
+            raise ValueError("Captura latitud y longitud del evento juntas")
+        has_coordinates = self.event_latitude is not None
+        has_location = all((self.event_city, self.event_municipality, self.event_state))
+        if not has_coordinates and not has_location:
+            raise ValueError("Completa ciudad, municipio y estado del evento")
         return self
 
 
 class BookingResponse(BaseModel):
     id: int
-    musician_id: int
+    musician_id: int | None
     group_name: str
     client_id: int
     client_name: str
@@ -242,6 +298,12 @@ class BookingResponse(BaseModel):
     end_time: time
     hourly_rate_cents: int
     price_type: str
+    booking_type: str = "normal"
+    surprise_genre: str | None = None
+    event_latitude: float | None = None
+    event_longitude: float | None = None
+    distancia_evento_km: float | None = None
+    surprise_revealed: bool = True
     duration_minutes: int
     subtotal_cents: int
     service_fee_cents: int

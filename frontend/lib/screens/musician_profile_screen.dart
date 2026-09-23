@@ -52,11 +52,13 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
       'equipment_brands',
       'audience_capacity',
       'description',
+      'radio_servicio_sorpresa_km',
     ])
       key: TextEditingController(),
   };
   Map<String, dynamic>? profile;
   bool sound = false;
+  bool surpriseGroupEnabled = false;
   String cardTheme = 'classic';
   bool busy = false;
   bool loading = true;
@@ -70,6 +72,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
   @override
   void initState() {
     super.initState();
+    fields['radio_servicio_sorpresa_km']!.text = '30';
     _initialize();
   }
 
@@ -509,6 +512,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
           value is List ? value.join(', ') : value?.toString() ?? '';
     }
     sound = data['includes_sound'] as bool? ?? false;
+    surpriseGroupEnabled = data['surprise_group_enabled'] as bool? ?? false;
     cardTheme = data['card_theme']?.toString() ?? 'classic';
   }
 
@@ -521,6 +525,13 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
     'subwoofer_count',
     'mid_speaker_count',
     'audience_capacity',
+    'radio_servicio_sorpresa_km',
+  }.contains(key);
+
+  bool decimal(String key) => const {
+    'hourly_rate',
+    'local_hourly_rate',
+    'low_season_hourly_rate',
   }.contains(key);
 
   String label(String key) =>
@@ -545,6 +556,8 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
         'equipment_brands': 'Marcas (separadas por coma)',
         'audience_capacity': 'Capacidad de público',
         'description': 'Historia y descripción',
+        'radio_servicio_sorpresa_km':
+            'Radio de servicio sorpresa (máximo 30 km)',
       }[key]!;
 
   bool _isEligibleLowSeasonDate(DateTime value) =>
@@ -624,15 +637,10 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
       final saved =
           await widget.api.put('/api/musicians/me', {
                 for (final entry in fields.entries)
-                  if ((entry.key != 'admin_phone' &&
-                          entry.key != 'local_hourly_rate' &&
-                          entry.key != 'low_season_hourly_rate') ||
-                      entry.value.text.trim().isNotEmpty)
+                  if (entry.value.text.trim().isNotEmpty)
                     entry.key:
                         numeric(entry.key)
-                            ? ((entry.key == 'hourly_rate' ||
-                                    entry.key == 'local_hourly_rate' ||
-                                    entry.key == 'low_season_hourly_rate')
+                            ? (decimal(entry.key)
                                 ? double.parse(entry.value.text)
                                 : int.parse(entry.value.text))
                             : entry.key == 'equipment_brands'
@@ -645,6 +653,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
                                 .toList()
                             : entry.value.text,
                 'includes_sound': sound,
+                'surprise_group_enabled': surpriseGroupEnabled,
                 'card_theme': cardTheme,
               })
               as Map<String, dynamic>;
@@ -1514,25 +1523,30 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
                   controller: entry.value,
                   keyboardType:
                       numeric(entry.key)
-                          ? TextInputType.number
+                          ? TextInputType.numberWithOptions(
+                            decimal: decimal(entry.key),
+                          )
                           : TextInputType.text,
                   maxLines: entry.key == 'description' ? 4 : 1,
                   decoration: InputDecoration(labelText: label(entry.key)),
-                  validator:
-                      (value) =>
-                          value == null ||
-                                  value.trim().isEmpty &&
-                                      (entry.key != 'admin_phone' &&
-                                              entry.key !=
-                                                  'local_hourly_rate' &&
-                                              entry.key !=
-                                                  'low_season_hourly_rate' &&
-                                              entry.key != 'low_season_dates' ||
-                                          (entry.key == 'admin_phone' &&
-                                              profile?['admin_phone_saved'] !=
-                                                  true))
-                              ? 'Campo obligatorio'
-                              : null,
+                  validator: (value) {
+                    const optional = {
+                      'admin_phone',
+                      'local_hourly_rate',
+                      'low_season_hourly_rate',
+                      'low_season_dates',
+                    };
+                    if (value == null || value.trim().isEmpty) {
+                      if (entry.key == 'admin_phone' &&
+                          profile?['admin_phone_saved'] != true) {
+                        return 'Campo obligatorio';
+                      }
+                      return optional.contains(entry.key)
+                          ? null
+                          : 'Campo obligatorio';
+                    }
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 13),
                 if (entry.key == 'low_season_dates') ...[
@@ -1651,6 +1665,18 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
                 onChanged: (value) => setState(() => sound = value),
                 title: const Text('Incluye equipo de sonido'),
                 secondary: const Icon(Icons.speaker_group_outlined),
+              ),
+              const Divider(height: 24),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: surpriseGroupEnabled,
+                onChanged:
+                    (value) => setState(() => surpriseGroupEnabled = value),
+                title: const Text('Participar en Grupo Sorpresa'),
+                subtitle: const Text(
+                  'Garibaldy podrá seleccionarte por género, precio, agenda y radio de servicio desde tu ubicación base.',
+                ),
+                secondary: const Icon(Icons.card_giftcard_rounded),
               ),
               const SizedBox(height: 10),
               FilledButton.icon(

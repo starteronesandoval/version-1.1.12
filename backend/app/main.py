@@ -1,4 +1,5 @@
 import json
+import math
 import asyncio
 import hashlib
 import hmac
@@ -12,6 +13,7 @@ import base64
 import jwt
 import stripe
 import time
+import unicodedata
 from collections import defaultdict, deque
 from threading import Lock
 from datetime import date, datetime, timedelta, timezone
@@ -44,6 +46,7 @@ from .billing import (
 )
 from .config import settings
 from .database import SessionLocal, get_db
+from .geography import municipality_coordinates
 from .social import router as social_router
 from .notifications import router as notifications_router, enqueue, dispatch_pending
 from .platinum import router as platinum_router, public_certificate, can_manage_platinum, request_state
@@ -59,6 +62,7 @@ from .schemas import (AdminPayoutAction, AvailabilityResponse, AvatarChoiceUpdat
                       EventChatAccessResponse, EventChatInviteResponse,
                       ClientProfileResponse, ClientProfileUpsert, LoginRequest,
                       MusicianProfileResponse, MusicianProfileUpsert,
+                      SurpriseBookingCreate,
                       PayoutDestinationResponse, PayoutDestinationUpsert,
                       StripeConnectAccountUpdate,
                       GoogleAuthRequest, PasswordResetConfirm, PasswordResetRequest,
@@ -559,6 +563,10 @@ def musician_out(
         subwoofer_count=profile.subwoofer_count, mid_speaker_count=profile.mid_speaker_count,
         equipment_brands=values(profile.equipment_brands), audience_capacity=profile.audience_capacity,
         description=profile.description, media=profile.media,
+        surprise_group_enabled=profile.surprise_group_enabled,
+        base_latitude=profile.base_latitude,
+        base_longitude=profile.base_longitude,
+        radio_servicio_sorpresa_km=profile.radio_servicio_sorpresa_km,
         platinum_certificate=public_certificate(profile),
         avatar_preset=choice.preset if choice else "jaguar_guitar",
         avatar_color=choice.color if choice else "#8B5CF6",
@@ -577,6 +585,8 @@ def client_out(profile: ClientProfile) -> ClientProfileResponse:
     return ClientProfileResponse(
         id=profile.id, user_id=profile.user_id, name=profile.name,
         city=profile.city, municipality=profile.municipality, state=profile.state,
+        location_latitude=profile.location_latitude,
+        location_longitude=profile.location_longitude,
         musical_tastes=values(profile.musical_tastes),
         favorite_groups=values(profile.favorite_groups),
         avatar_url=profile.avatar.url if profile.avatar else None,
@@ -598,14 +608,16 @@ def booking_query():
 
 
 def booking_out(
-    booking: Booking, *, include_private_recommendation: bool = False
+    booking: Booking, *, include_private_recommendation: bool = False,
+    reveal_surprise: bool = True,
 ) -> BookingResponse:
     chat_active, chat_status = booking_chat_state(booking)
     can_review, review_status = booking_review_state(booking)
+    surprise_revealed = booking.booking_type != "surprise" or reveal_surprise
     return BookingResponse(
         id=booking.id,
-        musician_id=booking.musician_id,
-        group_name=booking.musician.group_name,
+        musician_id=booking.musician_id if surprise_revealed else None,
+        group_name=booking.musician.group_name if surprise_revealed else "Grupo Sorpresa",
         client_id=booking.client_id,
         client_name=booking.client.name,
         client_email=(booking.client.user.phone or booking.client.user.email),
@@ -615,6 +627,12 @@ def booking_out(
         end_time=booking.end_time,
         hourly_rate_cents=booking.hourly_rate_cents,
         price_type=booking.price_type,
+        booking_type=booking.booking_type,
+        surprise_genre=booking.surprise_genre,
+        event_latitude=booking.event_latitude,
+        event_longitude=booking.event_longitude,
+        distancia_evento_km=booking.surprise_distance_km,
+        surprise_revealed=surprise_revealed,
         duration_minutes=booking.duration_minutes,
         subtotal_cents=booking.subtotal_cents,
         service_fee_cents=booking.service_fee_cents,
@@ -680,6 +698,8 @@ def booking_review_state(booking: Booking) -> tuple[bool, str]:
 
 
 def booking_chat_state(booking: Booking) -> tuple[bool, str]:
+    if booking.booking_type == "surprise" and booking.payment_status != "paid":
+        return False, "El chat se habilitará cuando Stripe confirme el pago."
     timezone = ZoneInfo(settings.event_timezone)
     now = datetime.now(timezone)
     starts_at = datetime.combine(
@@ -1092,6 +1112,9 @@ def upsert_client(data: ClientProfileUpsert, user: User = Depends(require_role(U
     admin_phone = normalize_phone(data.admin_phone) if data.admin_phone else None
     payload = data.model_dump(exclude={"musical_tastes", "favorite_groups", "admin_phone"})
     payload.update(musical_tastes=csv(data.musical_tastes), favorite_groups=csv(data.favorite_groups))
+    resolved_location = municipality_coordinates(data.state, data.municipality)
+    if resolved_location:
+        payload["location_latitude"], payload["location_longitude"] = resolved_location
     if admin_phone:
         payload["admin_phone"] = admin_phone
     if profile:
@@ -1151,6 +1174,30 @@ def upsert_musician(data: MusicianProfileUpsert, user: User = Depends(require_ro
         raise HTTPException(422, "Completa ciudad, municipio y estado")
     admin_phone = normalize_phone(data.admin_phone) if data.admin_phone else None
     payload = data.model_dump(exclude={"equipment_brands", "admin_phone", "low_season_dates"}); payload["equipment_brands"] = csv(data.equipment_brands)
+    if data.surprise_group_enabled is None:
+        payload.pop("surprise_group_enabled", None)
+    # Older APKs do not know about geographic matching.  Preserve a saved
+    # base location/radius when they update another profile field.
+    for field in (
+        "base_latitude", "base_longitude", "radio_servicio_sorpresa_km",
+    ):
+        if field not in data.model_fields_set:
+            payload.pop(field, None)
+    # New app versions only ask for city, municipality and state.  Resolve an
+    # approximate base location locally from the INEGI catalog; explicit legacy
+    # coordinates are respected for compatibility and more precise setup.
+    resolved_location = municipality_coordinates(data.state, data.municipality)
+    has_explicit_location = {"base_latitude", "base_longitude"}.issubset(data.model_fields_set)
+    if resolved_location and not has_explicit_location:
+        payload["base_latitude"], payload["base_longitude"] = resolved_location
+    effective_enabled = data.surprise_group_enabled
+    if effective_enabled is None and profile:
+        effective_enabled = profile.surprise_group_enabled
+    if effective_enabled and not (
+        (payload.get("base_latitude") is not None and payload.get("base_longitude") is not None)
+        or (profile and profile.base_latitude is not None and profile.base_longitude is not None)
+    ):
+        raise HTTPException(422, "No pudimos ubicar el municipio de la agrupación. Verifica ciudad, municipio y estado.")
     payload["low_season_dates"] = json.dumps([item.isoformat() for item in data.low_season_dates])
     if admin_phone:
         payload["admin_phone"] = admin_phone
@@ -1543,6 +1590,8 @@ def create_booking(
         venue=data.venue.strip(),
         start_time=data.start_time,
         end_time=data.end_time,
+        event_latitude=data.event_latitude,
+        event_longitude=data.event_longitude,
         price_type=price_type,
         **booking_price_snapshot(
             hourly_rate, data.start_time, data.end_time
@@ -1566,6 +1615,212 @@ def create_booking(
     return booking_out(saved)
 
 
+def _match_text(value: str | None) -> str:
+    normalized = unicodedata.normalize("NFKD", (value or "").strip().casefold())
+    return "".join(character for character in normalized if not unicodedata.combining(character))
+
+
+def _same_service_zone(musician: MusicianProfile, client: ClientProfile) -> bool:
+    """Use existing profile geography as the service-zone boundary."""
+    musician_state = _match_text(musician.state)
+    client_state = _match_text(client.state)
+    if not musician_state or musician_state != client_state:
+        return False
+    musician_places = {
+        _match_text(value)
+        for value in (musician.city, musician.municipality)
+        if value and value.strip()
+    }
+    client_places = {
+        _match_text(value)
+        for value in (client.city, client.municipality)
+        if value and value.strip()
+    }
+    return bool(musician_places.intersection(client_places))
+
+
+def _haversine_distance_km(
+    origin_latitude: float, origin_longitude: float,
+    destination_latitude: float, destination_longitude: float,
+) -> float:
+    """Great-circle distance; deterministic fallback with no external provider."""
+    latitude_delta = math.radians(destination_latitude - origin_latitude)
+    longitude_delta = math.radians(destination_longitude - origin_longitude)
+    origin_latitude_rad = math.radians(origin_latitude)
+    destination_latitude_rad = math.radians(destination_latitude)
+    value = (
+        math.sin(latitude_delta / 2) ** 2
+        + math.cos(origin_latitude_rad) * math.cos(destination_latitude_rad)
+        * math.sin(longitude_delta / 2) ** 2
+    )
+    return 6371.0088 * 2 * math.atan2(math.sqrt(value), math.sqrt(1 - value))
+
+
+def event_distance_km(
+    musician: MusicianProfile, event_latitude: float, event_longitude: float,
+) -> float | None:
+    """Distance-provider seam for future road-routing providers.
+
+    Replace this implementation with Google Maps, Mapbox, or another routing
+    adapter later; matching only depends on this stable function.
+    """
+    if musician.base_latitude is None or musician.base_longitude is None:
+        return None
+    return _haversine_distance_km(
+        musician.base_latitude, musician.base_longitude,
+        event_latitude, event_longitude,
+    )
+
+
+def _matches_surprise_genre(musician: MusicianProfile, genre: str) -> bool:
+    requested = _match_text(genre)
+    description = _match_text(f"{musician.group_type} {musician.musical_style}")
+    if requested == "otros":
+        return not any(
+            known in description
+            for known in ("norten", "banda", "mariachi", "rock")
+        )
+    aliases = {
+        "norteno": ("norten",),
+        "banda": ("banda",),
+        "mariachi": ("mariachi",),
+        "rock": ("rock",),
+    }
+    return any(alias in description for alias in aliases.get(requested, (requested,)))
+
+
+def _surprise_rate_is_eligible(rate: float, max_hourly_rate: float) -> bool:
+    """Accept exact budget or a rate no more than MXN 500 below it."""
+    rate_cents = int(
+        (Decimal(str(rate)) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    )
+    budget_cents = int(
+        (Decimal(str(max_hourly_rate)) * 100).quantize(
+            Decimal("1"), rounding=ROUND_HALF_UP
+        )
+    )
+    savings_cents = budget_cents - rate_cents
+    return 0 <= savings_cents <= 50_000
+
+
+def _weighted_surprise_candidates(candidates):
+    """Give Estilo Libre three entries in the surprise draw, not priority.
+
+    Every other eligible group keeps one entry.  The group still must pass all
+    availability, budget and geographic filters before receiving this weight.
+    """
+    weighted = []
+    for candidate in candidates:
+        musician = candidate[0]
+        weight = 3 if _match_text(musician.group_name) == "estilo libre" else 1
+        weighted.extend([candidate] * weight)
+    return weighted
+
+
+@app.post(
+    "/api/bookings/surprise",
+    response_model=BookingResponse,
+    status_code=201,
+)
+def create_surprise_booking(
+    data: SurpriseBookingCreate,
+    user: User = Depends(require_role(UserRole.client)),
+    db: Session = Depends(get_db),
+):
+    if data.event_date < date.today():
+        raise HTTPException(422, "La fecha del evento debe ser futura")
+    client = db.scalar(
+        select(ClientProfile).where(ClientProfile.user_id == user.id)
+    )
+    if not client or not all((
+        client.admin_phone, client.city, client.municipality, client.state,
+    )):
+        raise HTTPException(409, "Completa primero tu perfil de cliente")
+
+    if data.event_latitude is not None:
+        event_latitude, event_longitude = data.event_latitude, data.event_longitude
+    else:
+        resolved_location = municipality_coordinates(
+            data.event_state, data.event_municipality,
+        )
+        if not resolved_location:
+            raise HTTPException(422, "No pudimos ubicar el municipio del evento. Verifica ciudad, municipio y estado.")
+        event_latitude, event_longitude = resolved_location
+
+    duration_minutes = (
+        data.end_time.hour * 60 + data.end_time.minute
+        - data.start_time.hour * 60 - data.start_time.minute
+    )
+    busy_ids = set(db.scalars(
+        select(MusicianBusyDate.musician_id).where(
+            MusicianBusyDate.busy_date == data.event_date
+        )
+    ).all())
+    committed_ids = set(db.scalars(
+        select(Booking.musician_id).where(
+            Booking.event_date == data.event_date,
+            Booking.payment_status.in_(("paid", "validating_payment", "checkout_created")),
+        )
+    ).all())
+
+    candidates: list[tuple[MusicianProfile, float, str, float]] = []
+    for musician in db.scalars(
+        musician_profiles().where(MusicianProfile.surprise_group_enabled.is_(True))
+    ).all():
+        if musician.id in busy_ids or musician.id in committed_ids:
+            continue
+        if not _matches_surprise_genre(musician, data.genre):
+            continue
+        distance_km = event_distance_km(
+            musician, event_latitude, event_longitude,
+        )
+        # 30 km is the current product ceiling even for a legacy profile that
+        # previously stored a wider personal radius.
+        effective_radius_km = min(musician.radio_servicio_sorpresa_km, 30)
+        if distance_km is None or distance_km > effective_radius_km:
+            continue
+        if duration_minutes < max(3, musician.minimum_booking_hours) * 60:
+            continue
+        rate, price_type = selected_hourly_rate(musician, client, data.event_date)
+        if not _surprise_rate_is_eligible(rate, data.max_hourly_rate):
+            continue
+        candidates.append((musician, rate, price_type, distance_km))
+
+    if not candidates:
+        raise HTTPException(
+            404,
+            "Aún no hay grupos disponibles con ese filtro de búsqueda.",
+        )
+    musician, hourly_rate, price_type, distance_km = secrets.choice(
+        _weighted_surprise_candidates(candidates)
+    )
+    budget_cents = int(
+        (Decimal(str(data.max_hourly_rate)) * 100).quantize(
+            Decimal("1"), rounding=ROUND_HALF_UP
+        )
+    )
+    booking = Booking(
+        musician_id=musician.id,
+        client_id=client.id,
+        event_date=data.event_date,
+        venue=data.venue.strip(),
+        start_time=data.start_time,
+        end_time=data.end_time,
+        event_latitude=event_latitude,
+        event_longitude=event_longitude,
+        price_type=price_type,
+        booking_type="surprise",
+        surprise_genre=data.genre.strip(),
+        surprise_budget_cents=budget_cents,
+        surprise_distance_km=round(distance_km, 1),
+        **booking_price_snapshot(hourly_rate, data.start_time, data.end_time),
+    )
+    db.add(booking)
+    db.commit()
+    saved = db.scalar(booking_query().where(Booking.id == booking.id))
+    return booking_out(saved, reveal_surprise=False)
+
+
 @app.get(
     "/api/musicians/me/bookings",
     response_model=list[BookingResponse],
@@ -1581,7 +1836,10 @@ def get_my_bookings(
         raise HTTPException(409, "Crea primero el perfil de la agrupación")
     bookings = db.scalars(
         booking_query()
-        .where(Booking.musician_id == profile.id)
+        .where(
+            Booking.musician_id == profile.id,
+            or_(Booking.booking_type != "surprise", Booking.payment_status == "paid"),
+        )
         .order_by(Booking.created_at.desc(), Booking.id.desc())
     ).all()
     return [
@@ -1608,7 +1866,15 @@ def get_client_bookings(
         .where(Booking.client_id == profile.id)
         .order_by(Booking.event_date, Booking.start_time)
     ).all()
-    return [booking_out(item) for item in bookings]
+    return [
+        booking_out(
+            item,
+            reveal_surprise=(
+                item.booking_type != "surprise" or item.payment_status == "paid"
+            ),
+        )
+        for item in bookings
+    ]
 
 
 @app.post(
