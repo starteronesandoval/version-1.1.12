@@ -28,7 +28,7 @@ from cryptography.fernet import Fernet
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import case, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
@@ -102,6 +102,70 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 app.mount("/uploads", StaticFiles(directory=settings.upload_dir), name="uploads")
+
+
+def public_page(*, title: str, body: str) -> HTMLResponse:
+    """Small public pages required by the Google OAuth consent screen."""
+    return HTMLResponse(
+        f"""<!doctype html><html lang="es-MX"><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1">
+        <title>{title} | Garibaldi</title>
+        <style>body{{font-family:system-ui,-apple-system,sans-serif;line-height:1.6;
+        max-width:780px;margin:0 auto;padding:32px 20px;color:#1d2630}}h1{{color:#7a1d43}}
+        h2{{margin-top:2rem}}a{{color:#7a1d43}}footer{{margin-top:3rem;color:#667085;
+        font-size:.9rem}}</style></head><body><h1>Garibaldi</h1>{body}
+        <footer><a href="/">Inicio</a> · <a href="/privacy">Privacidad</a> ·
+        <a href="/terms">Términos</a></footer></body></html>"""
+    )
+
+
+@app.get("/", include_in_schema=False, response_class=HTMLResponse)
+def public_homepage():
+    return public_page(
+        title="Música en vivo para tus eventos",
+        body="""<h2>Música en vivo para tus eventos</h2>
+        <p>Garibaldi conecta clientes con agrupaciones musicales para solicitar,
+        contratar y gestionar eventos.</p>
+        <p>Usa la aplicación móvil para crear tu cuenta, explorar agrupaciones y
+        organizar tu evento.</p>""",
+    )
+
+
+@app.get("/privacy", include_in_schema=False, response_class=HTMLResponse)
+def privacy_policy():
+    return public_page(
+        title="Política de privacidad",
+        body="""<h2>Política de privacidad</h2><p>Última actualización: 23 de septiembre de 2026.</p>
+        <p>Garibaldi usa los datos que proporcionas al crear una cuenta y usar la
+        plataforma —como nombre, correo, perfil, datos de eventos, mensajes y estado
+        de contratación— para operar el servicio, dar soporte, prevenir fraude y
+        cumplir obligaciones legales.</p>
+        <p>Los datos necesarios para una contratación se comparten con la contraparte
+        involucrada. Los pagos se procesan con proveedores de pago; Garibaldi no
+        almacena datos completos de tarjetas.</p>
+        <p>Puedes solicitar acceso, corrección o eliminación de tus datos escribiendo
+        a <a href="mailto:c4nortedecocula@gmail.com">c4nortedecocula@gmail.com</a>.
+        Conservamos información cuando sea necesaria para contratos, pagos, seguridad
+        o cumplimiento legal.</p>""",
+    )
+
+
+@app.get("/terms", include_in_schema=False, response_class=HTMLResponse)
+def terms_of_service():
+    return public_page(
+        title="Términos de servicio",
+        body="""<h2>Términos de servicio</h2><p>Última actualización: 23 de septiembre de 2026.</p>
+        <p>Garibaldi es una plataforma para conectar clientes y agrupaciones musicales.
+        Al usarla, aceptas proporcionar información veraz, respetar a los demás usuarios
+        y cumplir los acuerdos de cada contratación.</p>
+        <p>Las agrupaciones son responsables de la información de su perfil, su
+        disponibilidad y la prestación de sus servicios. Los clientes son responsables
+        de la información de su evento y de los pagos acordados. Los cobros se procesan
+        mediante los proveedores de pago disponibles en la aplicación.</p>
+        <p>Podemos suspender cuentas por fraude, uso ilícito, suplantación o incumplimiento
+        de estos términos. Para soporte, escribe a
+        <a href="mailto:c4nortedecocula@gmail.com">c4nortedecocula@gmail.com</a>.</p>""",
+    )
 
 
 @app.middleware("http")
