@@ -461,11 +461,26 @@ def sync_checkout(event_type: str, obj, db: Session) -> None:
                             title="¡Tu Grupo Sorpresa está listo!",
                             body=f"Tu agrupación es {booking.musician.group_name}. Ya puedes consultar el contrato.",
                             data={"booking_id": str(booking.id)})
+                enqueue(db, user_id=booking.client.user_id,
+                        event_key=f"booking_paid_client:{booking.id}", kind="payment",
+                        title="Pago confirmado",
+                        body="Stripe confirmó tu pago y la fecha de tu evento quedó apartada.",
+                        data={"booking_id": str(booking.id)})
                 enqueue(db, user_id=booking.musician.user_id,
                         event_key=f"booking_paid:{booking.id}", kind="booking",
                         title="Contratación confirmada",
                         body="El cliente confirmó y pagó la contratación.",
                         data={"booking_id": str(booking.id)})
+                # El contrato se congela al crear la contratación y sólo se
+                # vuelve efectivo después de la confirmación de Stripe. Ambos
+                # participantes reciben un aviso independiente del pago para
+                # que puedan abrirlo desde su sección de contratos.
+                for recipient_id in (booking.client.user_id, booking.musician.user_id):
+                    enqueue(db, user_id=recipient_id,
+                            event_key=f"booking_contract_ready:{booking.id}", kind="booking",
+                            title="Contrato disponible",
+                            body="Tu contrato confirmado ya está disponible en Mis contratos.",
+                            data={"booking_id": str(booking.id)})
         elif event_type == "checkout.session.completed" and booking.payment_status not in {
             "paid", "refunded", "refund_pending", "refund_failed",
         }:
@@ -479,9 +494,19 @@ def sync_checkout(event_type: str, obj, db: Session) -> None:
     elif event_type == "checkout.session.async_payment_failed" and booking.payment_status not in {"paid", "refunded", "refund_pending", "refund_failed"}:
         booking.payment_status = "failed"
         booking.payment_validation_started_at = None
+        enqueue(db, user_id=booking.client.user_id,
+                event_key=f"booking_payment_failed:{booking.id}", kind="payment",
+                title="No se confirmó el pago",
+                body="Stripe no pudo confirmar tu pago. Puedes intentar contratar nuevamente.",
+                data={"booking_id": str(booking.id)})
     elif event_type == "checkout.session.expired" and booking.payment_status not in {"paid", "refunded", "refund_pending", "refund_failed"}:
         booking.payment_status = "expired"
         booking.payment_validation_started_at = None
+        enqueue(db, user_id=booking.client.user_id,
+                event_key=f"booking_checkout_expired:{booking.id}", kind="payment",
+                title="Venció el tiempo para pagar",
+                body="La sesión de pago expiró. Puedes iniciar una nueva contratación si la fecha sigue disponible.",
+                data={"booking_id": str(booking.id)})
 
 
 def release_musician_funds(booking_id: int, db: Session) -> bool:
@@ -642,6 +667,11 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             status = refund.get("status")
             if status == "succeeded":
                 booking.payment_status = "refunded"
+                enqueue(db, user_id=booking.client.user_id,
+                        event_key=f"booking_refunded:{booking.id}", kind="payment",
+                        title="Reembolso confirmado",
+                        body="Stripe confirmó el reembolso de tu contratación por conflicto de fecha.",
+                        data={"booking_id": str(booking.id)})
             elif status in {"failed", "canceled"}:
                 booking.payment_status = "refund_failed"
                 for admin in db.scalars(select(User).where(

@@ -1168,6 +1168,7 @@ def upsert_musician(data: MusicianProfileUpsert, user: User = Depends(require_ro
             403, "Debes aceptar las Reglas para Agrupaciones antes de continuar"
         )
     profile = db.scalar(select(MusicianProfile).where(MusicianProfile.user_id == user.id))
+    is_new_public_group = profile is None
     if not profile and not data.admin_phone:
         raise HTTPException(422, "El número celular es obligatorio para completar tu perfil")
     if not all((data.city, data.municipality, data.state)):
@@ -1208,6 +1209,29 @@ def upsert_musician(data: MusicianProfileUpsert, user: User = Depends(require_ro
     acceptance = current_group_rules_acceptance(user.id, db)
     if acceptance:
         acceptance.group_name_snapshot = data.group_name.strip()
+    if is_new_public_group:
+        # A first completed profile is the point at which a group becomes
+        # discoverable in the marketplace.  Alert clients once, rather than
+        # spamming them for every later profile edit.
+        db.flush()
+        group_name = data.group_name.strip()
+        announcement_title = f"{group_name} se unió a Garibaldy"[:120]
+        announcement_body = (
+            f"{group_name} acaba de unirse a Garibaldy. Disfruta su música en vivo "
+            "y contrátalos en la app."
+        )[:250]
+        for client_user_id in db.scalars(select(User.id).where(
+            User.role == UserRole.client, User.is_active.is_(True),
+        )):
+            enqueue(
+                db,
+                user_id=client_user_id,
+                event_key=f"new_group_joined:{profile.id}",
+                kind="announcement",
+                title=announcement_title,
+                body=announcement_body,
+                data={"musician_id": str(profile.id)},
+            )
     db.commit()
     profile = db.scalar(musician_profiles().where(MusicianProfile.user_id == user.id))
     return musician_out(profile)
