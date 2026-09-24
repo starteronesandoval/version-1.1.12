@@ -1,7 +1,6 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
 import '../api_service.dart';
@@ -27,7 +26,7 @@ class _AuthScreenState extends State<AuthScreen> {
   bool googleReady = false;
   bool googleResultHandled = false;
   String? googleError;
-  StreamSubscription<GoogleSignInAuthenticationEvent>? googleEvents;
+  late final GoogleSignIn _googleSignIn;
 
   @override
   void initState() {
@@ -44,8 +43,7 @@ class _AuthScreenState extends State<AuthScreen> {
     const iosClientId = String.fromEnvironment('GOOGLE_IOS_CLIENT_ID');
     if (webClientId.isEmpty) return;
     try {
-      final google = GoogleSignIn.instance;
-      await google.initialize(
+      _googleSignIn = GoogleSignIn(
         clientId:
             kIsWeb
                 ? webClientId
@@ -55,26 +53,17 @@ class _AuthScreenState extends State<AuthScreen> {
                 : null,
         serverClientId: kIsWeb ? null : webClientId,
       );
-      googleEvents = google.authenticationEvents.listen(
-        _handleGoogleEvent,
-        onError: _handleGoogleError,
-      );
       if (mounted) setState(() => googleReady = true);
     } catch (error) {
       _handleGoogleError(error);
     }
   }
 
-  Future<void> _handleGoogleEvent(GoogleSignInAuthenticationEvent event) async {
-    if (event is GoogleSignInAuthenticationEventSignIn) {
-      await _completeGoogleSignIn(event.user);
-    }
-  }
-
   Future<void> _completeGoogleSignIn(GoogleSignInAccount account) async {
     if (busy || googleResultHandled) return;
     googleResultHandled = true;
-    final idToken = account.authentication.idToken;
+    final authentication = await account.authentication;
+    final idToken = authentication.idToken;
     if (idToken == null || idToken.isEmpty) {
       googleResultHandled = false;
       _showMessage(
@@ -89,7 +78,7 @@ class _AuthScreenState extends State<AuthScreen> {
         selectedRole = await _chooseGoogleRole();
         if (selectedRole == null) {
           googleResultHandled = false;
-          await GoogleSignIn.instance.signOut();
+          await _googleSignIn.signOut();
           return;
         }
       }
@@ -110,7 +99,7 @@ class _AuthScreenState extends State<AuthScreen> {
               'Balam rechazó el acceso (${error.statusCode}): ${error.message}';
         });
       }
-      await GoogleSignIn.instance.signOut();
+      await _googleSignIn.signOut();
       _showMessage(error.message);
     } catch (error, stackTrace) {
       googleResultHandled = false;
@@ -121,7 +110,7 @@ class _AuthScreenState extends State<AuthScreen> {
           googleError = 'No se pudo conectar con Balam: $error';
         });
       }
-      await GoogleSignIn.instance.signOut();
+      await _googleSignIn.signOut();
       _showMessage('No se pudo conectar con Balam: $error');
     } finally {
       if (mounted) setState(() => busy = false);
@@ -161,21 +150,19 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   void _handleGoogleError(Object error) {
-    if (error is GoogleSignInException &&
-        error.code == GoogleSignInExceptionCode.canceled) {
+    if (error is PlatformException && error.code == 'sign_in_canceled') {
       if (mounted) {
         setState(() {
           googleError =
-              'Google canceló el acceso. Si elegiste una cuenta y regresaste aquí, '
-              'vuelve a iniciar esa cuenta en el emulador.';
+              'Google canceló el acceso. Elige una cuenta para continuar.';
         });
       }
       return;
     }
     debugPrint('Error de acceso Google: $error');
     final detail =
-        error is GoogleSignInException
-            ? '${error.code}: ${error.description ?? "sin detalle"}'
+        error is PlatformException
+            ? '${error.code}: ${error.message ?? "sin detalle"}'
             : error.toString();
     if (mounted) setState(() => googleError = detail);
     _showMessage('No se pudo iniciar sesión con Google ($detail).');
@@ -198,7 +185,8 @@ class _AuthScreenState extends State<AuthScreen> {
     try {
       googleResultHandled = false;
       if (mounted) setState(() => googleError = null);
-      final account = await GoogleSignIn.instance.authenticate();
+      final account = await _googleSignIn.signIn();
+      if (account == null) return;
       await _completeGoogleSignIn(account);
     } catch (error) {
       _handleGoogleError(error);
@@ -364,7 +352,6 @@ class _AuthScreenState extends State<AuthScreen> {
 
   @override
   void dispose() {
-    googleEvents?.cancel();
     email.dispose();
     password.dispose();
     super.dispose();
@@ -504,7 +491,7 @@ class _AuthScreenState extends State<AuthScreen> {
                         child: Opacity(
                           opacity: busy ? .55 : 1,
                           child: googleSignInButton(
-                            kIsWeb || busy ? null : _startGoogleSignIn,
+                            busy ? null : _startGoogleSignIn,
                           ),
                         ),
                       )
