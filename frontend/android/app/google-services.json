@@ -14,6 +14,22 @@
       },
       "oauth_client": [
         {
+          "client_id": "882316037020-236cnu62hq2q3c4o8m74dmsa3eojhhue.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "mx.balam.app",
+            "certificate_hash": "8e884a60fc2bfe4ef9d6d076ff1e5e0fc70b65a2"
+          }
+        },
+        {
+          "client_id": "882316037020-4tmmbh564nh34i0k6khufthacvr32t1a.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "mx.balam.app",
+            "certificate_hash": "ebc88dd5e4fb737bfda83da0b8502779d71fb898"
+          }
+        },
+        {
           "client_id": "882316037020-3tgmqu1p4vn8g187aam0svvo8cmr1l0g.apps.googleusercontent.com",
           "client_type": 3
         }

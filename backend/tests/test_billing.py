@@ -134,6 +134,42 @@ def test_checkout_charges_frozen_booking_total():
         settings.stripe_secret_key = original_key
 
 
+def test_surprise_checkout_reserves_group_before_stripe_call():
+    headers, first_id = create_booking_fixture("-surprise-one")
+    second_headers, second_id = create_booking_fixture("-surprise-two")
+    with SessionLocal() as db:
+        first, second = db.get(Booking, first_id), db.get(Booking, second_id)
+        second.musician_id = first.musician_id
+        second.event_date = first.event_date
+        first.booking_type = second.booking_type = "surprise"
+        db.commit()
+
+    original_key = settings.stripe_secret_key
+    settings.stripe_secret_key = "test-placeholder"
+    try:
+        with patch("app.billing.stripe.Customer.create") as customer_create, patch(
+            "app.billing.stripe.checkout.Session.create"
+        ) as checkout_create:
+            customer_create.return_value = SimpleNamespace(id="cus_surprise")
+            checkout_create.return_value = SimpleNamespace(
+                id="cs_surprise", url="https://checkout.test"
+            )
+            assert client.post(
+                "/api/billing/checkout-sessions", headers=headers,
+                json={"booking_id": first_id},
+            ).status_code == 201
+            expires_in = checkout_create.call_args.kwargs["expires_at"] - int(clock.time())
+            assert 1790 <= expires_in <= 1800
+            response = client.post(
+                "/api/billing/checkout-sessions", headers=second_headers,
+                json={"booking_id": second_id},
+            )
+        assert response.status_code == 409
+        assert checkout_create.call_count == 1
+    finally:
+        settings.stripe_secret_key = original_key
+
+
 def test_signed_webhook_accepts_stripe_object_payload():
     original_secret = settings.stripe_webhook_secret
     settings.stripe_webhook_secret = "whsec_test"

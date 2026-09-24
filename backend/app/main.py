@@ -632,7 +632,7 @@ def musician_out(
         base_longitude=profile.base_longitude,
         radio_servicio_sorpresa_km=profile.radio_servicio_sorpresa_km,
         platinum_certificate=public_certificate(profile),
-        avatar_preset=choice.preset if choice else "jaguar_guitar",
+        avatar_preset=choice.preset if choice else "musician_singer_black",
         avatar_color=choice.color if choice else "#8B5CF6",
         avatar_mode=choice.mode if choice else "photo",
         rating=(round(sum(r.overall_score for r in profile.reviews) / len(profile.reviews), 2)
@@ -654,7 +654,7 @@ def client_out(profile: ClientProfile) -> ClientProfileResponse:
         musical_tastes=values(profile.musical_tastes),
         favorite_groups=values(profile.favorite_groups),
         avatar_url=profile.avatar.url if profile.avatar else None,
-        avatar_preset=choice.preset if choice else "jaguar_guitar",
+        avatar_preset=choice.preset if choice else "musician_singer_black",
         avatar_color=choice.color if choice else "#8B5CF6",
         avatar_mode=choice.mode if choice else "photo",
         profile_complete=bool(profile.admin_phone and profile.city
@@ -1138,13 +1138,11 @@ def admin_bookings(
 def set_avatar_preset(data: AvatarChoiceUpdate, user: User = Depends(current_user), db: Session = Depends(get_db)):
     allowed = {
         "musician_tuba_burgundy", "musician_trumpet_black", "musician_accordion_black",
-        "musician_singer_black", "musician_guitar_eden", "musician_guitar_chalino",
-        "musician_accordion_red",
-        "jaguar_guitar", "jaguar_accordion", "jaguar_dj", "coyote_singer", "coyote_guitar", "coyote_drums",
-        "owl_violin", "owl_keyboard", "owl_sax", "fox_bass", "fox_mariachi", "fox_singer", "bear_tuba",
-        "bear_drums", "bear_accordion", "eagle_trumpet", "eagle_guitar", "eagle_dj", "rabbit_violin",
-        "lion_trumpet", "lion_conductor", "lion_tuba", "axolotl_guitar", "axolotl_dj", "raccoon_bass",
-        "deer_harp", "bull_trombone", "cat_violin", "elephant_cello", "turtle_flute",
+        "musician_singer_black", "musician_accordion_red",
+        "musician_drums_cowboy", "musician_guitar_white_hat",
+        "musician_guitar_black_cap", "musician_singer_black_cap",
+        "musician_bass_black_jacket", "musician_guitar_sunset",
+        "musician_accordion_blue",
         "music", "microphone", "guitar", "accordion", "drums", "headphones", "star", "jaguar",
     }
     if data.preset not in allowed:

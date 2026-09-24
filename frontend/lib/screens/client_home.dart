@@ -13,6 +13,7 @@ import '../widgets/booking_review_sheet.dart';
 import '../widgets/glass_ui.dart';
 import '../widgets/network_video_player.dart';
 import '../widgets/social_widgets.dart';
+import '../widgets/surprise_group_sheet.dart';
 import '../widgets/platinum_certificate.dart';
 import '../widgets/notification_inbox.dart';
 import 'rhythm_game_screen.dart';
@@ -245,6 +246,26 @@ class _ClientHomeState extends State<ClientHome> {
                       ),
                     ),
                     Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
+                      child: FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(56),
+                          backgroundColor: const Color(0xFF7B4DFF),
+                        ),
+                        onPressed:
+                            () => showSurpriseGroupSheet(
+                              context,
+                              api: widget.api,
+                              onBookingCreated: loadClientBookings,
+                            ),
+                        icon: const Icon(Icons.card_giftcard_rounded),
+                        label: const Text(
+                          'Contratar Grupo Sorpresa',
+                          style: TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                    ),
+                    Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
                       child: Row(
                         children: [
@@ -352,7 +373,7 @@ class _ClientHomeState extends State<ClientHome> {
             ? null
             : widget.api.mediaUrl(clientProfile?['avatar_url']),
     fallback: clientProfile?['name'] ?? 'C',
-    preset: clientProfile?['avatar_preset'] ?? 'jaguar_guitar',
+    preset: clientProfile?['avatar_preset'] ?? 'musician_singer_black',
     color: clientProfile?['avatar_color'] ?? '#8B5CF6',
   );
 
@@ -392,7 +413,7 @@ class _ClientHomeState extends State<ClientHome> {
                       ? null
                       : widget.api.mediaUrl(avatar?['url']),
               fallback: band['group_name'],
-              preset: band['avatar_preset'] ?? 'jaguar_guitar',
+              preset: band['avatar_preset'] ?? 'musician_singer_black',
               color: band['avatar_color'] ?? '#8B5CF6',
               radius: 38,
             ),
@@ -536,7 +557,7 @@ class _ClientHomeState extends State<ClientHome> {
                                 ? null
                                 : widget.api.mediaUrl(avatar?['url']),
                         fallback: band['group_name'],
-                        preset: band['avatar_preset'] ?? 'jaguar_guitar',
+                        preset: band['avatar_preset'] ?? 'musician_singer_black',
                         color: band['avatar_color'] ?? '#8B5CF6',
                         radius: 56,
                       ),
@@ -1733,7 +1754,7 @@ class _ClientHomeState extends State<ClientHome> {
   Future<void> _pickPreset() async {
     final selection = await showAvatarPicker(
       context,
-      currentPreset: clientProfile?['avatar_preset'] ?? 'jaguar_guitar',
+      currentPreset: clientProfile?['avatar_preset'] ?? 'musician_singer_black',
       currentColor: clientProfile?['avatar_color'] ?? '#8B5CF6',
     );
     if (selection == null) return;
@@ -1815,7 +1836,7 @@ class _ClientHomeState extends State<ClientHome> {
                                 ),
                         fallback: clientProfile?['name'] ?? 'C',
                         preset:
-                            clientProfile?['avatar_preset'] ?? 'jaguar_guitar',
+                            clientProfile?['avatar_preset'] ?? 'musician_singer_black',
                         color: clientProfile?['avatar_color'] ?? '#8B5CF6',
                         radius: 50,
                       ),

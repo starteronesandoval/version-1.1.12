@@ -2,13 +2,10 @@
 
 1. Instala Flutter.
 2. Ejecuta `flutter pub get`.
-3. Inicia la API y después `flutter run`.
+3. Ejecuta `flutter run`.
 
-La URL predeterminada `http://10.0.2.2:8000` funciona en el emulador Android. Para iOS se usa `http://127.0.0.1:8000`. Para un teléfono físico puede pasarse la IP local sin editar código:
-
-```powershell
-flutter run --dart-define=API_BASE_URL=http://192.168.1.10:8000
-```
+La aplicación utiliza siempre `https://api.garibaldi.app`, tanto en teléfonos
+como en emuladores y builds de publicación.
 
 ## Compilación conectada
 
@@ -17,7 +14,7 @@ alojada en un servicio web HTTPS:
 
 ```powershell
 flutter build apk --release `
-  --dart-define=API_BASE_URL=https://api.tudominio.com
+  --dart-define=GOOGLE_WEB_CLIENT_ID=TU_CLIENT_ID_WEB.apps.googleusercontent.com
 ```
 
 ## Validación y release
@@ -25,11 +22,11 @@ flutter build apk --release `
 ```powershell
 flutter analyze
 flutter test
-flutter build web --release --dart-define=API_BASE_URL=https://API_PENDIENTE
-flutter build appbundle --release --dart-define=API_BASE_URL=https://API_PENDIENTE
+flutter build web --release
+flutter build appbundle --release
 ```
 
-Los builds release rechazan una URL HTTP o una URL de API ausente. El identificador de aplicación para Android e iOS es `mx.balam.app`. Para publicar en tiendas todavía se deben proporcionar las credenciales privadas de firma de Google Play y el equipo de Apple; nunca deben guardarse en Git.
+El identificador de aplicación para Android e iOS es `mx.balam.app`. Para publicar en tiendas todavía se deben proporcionar las credenciales privadas de firma de Google Play y el equipo de Apple; nunca deben guardarse en Git.
 
 ## Acceso con Google
 
@@ -45,7 +42,6 @@ Para probar en Chrome usa un puerto fijo:
 
 ```powershell
 flutter run -d chrome --web-hostname localhost --web-port 7357 `
-  --dart-define=API_BASE_URL=http://127.0.0.1:8000 `
   --dart-define=GOOGLE_WEB_CLIENT_ID=TU_CLIENT_ID_WEB.apps.googleusercontent.com
 ```
 

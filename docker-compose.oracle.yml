@@ -5,6 +5,7 @@ services:
     environment:
       FCM_PROJECT_ID: ${FCM_PROJECT_ID:?Define FCM_PROJECT_ID}
       FCM_CREDENTIALS_FILE: /run/secrets/firebase-service-account.json
+      RELEASE_DOWNLOAD_DIR: /data/releases
       FORWARDED_ALLOW_IPS: "*"
       TRUST_CLOUDFLARE_HEADERS: "true"
     volumes:

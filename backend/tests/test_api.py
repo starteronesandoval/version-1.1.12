@@ -85,13 +85,13 @@ def test_full_registration_and_search_flow():
     accepted_reference = client.get("/api/musicians/me/rules", headers=mh).json()
     assert accepted_reference["accepted_group_name"] == "Los del Valle"
     choice = client.put("/api/users/me/avatar-preset", headers=mh,
-        json={"preset":"jaguar_accordion","color":"#20C9B5"})
+        json={"preset":"musician_accordion_red","color":"#20C9B5"})
     assert choice.status_code == 200
     restored = client.get("/api/musicians/me", headers=mh)
     assert restored.status_code == 200
     assert restored.json()["equipment_brands"] == ["JBL", "QSC"]
     assert restored.json()["minimum_booking_hours"] == 3
-    assert restored.json()["avatar_preset"] == "jaguar_accordion"
+    assert restored.json()["avatar_preset"] == "musician_accordion_red"
     assert restored.json()["avatar_mode"] == "preset"
     busy = client.put(
         "/api/musicians/me/busy-dates/2099-10-18",
@@ -329,7 +329,7 @@ def test_full_registration_and_search_flow():
     selected_avatar = client.put(
         "/api/users/me/avatar-preset",
         headers=ch,
-        json={"preset": "jaguar_dj", "color": "#0EA5E9"},
+        json={"preset": "musician_singer_black", "color": "#0EA5E9"},
     )
     assert selected_avatar.status_code == 200
     assert selected_avatar.json()["mode"] == "preset"
