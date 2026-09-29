@@ -14,6 +14,8 @@ android {
     if (keystorePropertiesFile.exists()) {
         keystoreProperties.load(FileInputStream(keystorePropertiesFile))
     }
+    val hasReleaseSigning = listOf("keyAlias", "keyPassword", "storeFile", "storePassword")
+        .all { !keystoreProperties.getProperty(it).isNullOrBlank() }
 
     namespace = "mx.balam.app"
     compileSdk = 36
@@ -44,7 +46,7 @@ android {
     }
 
     signingConfigs {
-        if (keystorePropertiesFile.exists()) {
+        if (hasReleaseSigning) {
             create("release") {
                 keyAlias = keystoreProperties["keyAlias"] as String
                 keyPassword = keystoreProperties["keyPassword"] as String
@@ -58,9 +60,6 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.findByName("release")
-                ?: throw GradleException(
-                    "Falta frontend/android/key.properties para firmar el release."
-                )
         }
     }
 }
