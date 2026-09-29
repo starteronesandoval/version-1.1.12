@@ -24,12 +24,7 @@ class ApiService {
   static String _defaultBaseUrl() {
     const configured = String.fromEnvironment('API_BASE_URL');
     if (configured.isNotEmpty) return configured;
-    if (kReleaseMode) {
-      throw StateError(
-        'API_BASE_URL es obligatorio en builds de producción. '
-        'Usa --dart-define=API_BASE_URL=https://api.tudominio.com',
-      );
-    }
+    if (kReleaseMode) return 'https://api.garibaldi.app';
     if (kIsWeb) return 'http://127.0.0.1:8000';
     return defaultTargetPlatform == TargetPlatform.android
         ? 'http://10.0.2.2:8000'

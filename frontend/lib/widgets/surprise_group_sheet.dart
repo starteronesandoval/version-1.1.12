@@ -41,6 +41,7 @@ class _SurpriseGroupSheetState extends State<_SurpriseGroupSheet> {
   TimeOfDay? endTime;
   bool noticeAccepted = false;
   bool submitting = false;
+  bool openingCheckout = false;
   Map<String, dynamic>? quote;
   String? searchError;
 
@@ -136,23 +137,41 @@ class _SurpriseGroupSheetState extends State<_SurpriseGroupSheet> {
   }
 
   Future<void> checkout() async {
+    if (openingCheckout) return;
+    setState(() => openingCheckout = true);
     try {
       final response =
           await widget.api.post('/api/billing/checkout-sessions', {
                 'booking_id': quote!['id'],
               })
               as Map<String, dynamic>;
-      final opened = await launchUrl(
-        Uri.parse(response['url'] as String),
-        mode: LaunchMode.externalApplication,
-      );
-      if (!opened) throw ApiException('No fue posible abrir el pago.', 0);
+      final url = Uri.tryParse(response['url']?.toString() ?? '');
+      if (url == null || url.scheme != 'https' || url.host.isEmpty) {
+        throw const FormatException('URL de pago inválida');
+      }
+      var opened = await launchUrl(url, mode: LaunchMode.externalApplication);
+      if (!opened) {
+        opened = await launchUrl(url, mode: LaunchMode.inAppBrowserView);
+      }
+      if (!opened) throw const FormatException('No se pudo abrir el pago');
     } on ApiException catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(error.message)));
       }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No se pudo abrir el pago seguro. Revisa tu conexión e inténtalo nuevamente.',
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => openingCheckout = false);
     }
   }
 
@@ -441,9 +460,13 @@ class _SurpriseGroupSheetState extends State<_SurpriseGroupSheet> {
         minimumSize: const Size.fromHeight(54),
         backgroundColor: const Color(0xFF27AE86),
       ),
-      onPressed: checkout,
+      onPressed: openingCheckout ? null : checkout,
       icon: const Icon(Icons.lock_outline),
-      label: const Text('Continuar al pago seguro'),
+      label: Text(
+        openingCheckout
+            ? 'Abriendo pago seguro…'
+            : 'Continuar al pago seguro',
+      ),
     ),
   ];
 }

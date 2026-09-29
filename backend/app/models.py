@@ -259,19 +259,6 @@ class Booking(Base):
         "uq_bookings_paid_date", "musician_id", "event_date", unique=True,
         postgresql_where=text("payment_status = 'paid'"),
         sqlite_where=text("payment_status = 'paid'"),
-    ), Index(
-        # A surprise booking reserves its selected group as soon as checkout
-        # begins.  This is deliberately narrower than normal bookings, which
-        # may still coexist as unpaid quotes for the same day.
-        "uq_surprise_bookings_reserved_date", "musician_id", "event_date", unique=True,
-        postgresql_where=text(
-            "booking_type = 'surprise' AND payment_status IN "
-            "('checkout_created', 'validating_payment', 'paid')"
-        ),
-        sqlite_where=text(
-            "booking_type = 'surprise' AND payment_status IN "
-            "('checkout_created', 'validating_payment', 'paid')"
-        ),
     ),)
     id: Mapped[int] = mapped_column(primary_key=True)
     musician_id: Mapped[int] = mapped_column(

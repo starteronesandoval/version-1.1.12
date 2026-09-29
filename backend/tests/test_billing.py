@@ -134,7 +134,7 @@ def test_checkout_charges_frozen_booking_total():
         settings.stripe_secret_key = original_key
 
 
-def test_surprise_checkout_reserves_group_before_stripe_call():
+def test_surprise_checkout_does_not_reserve_group_before_stripe_payment():
     headers, first_id = create_booking_fixture("-surprise-one")
     second_headers, second_id = create_booking_fixture("-surprise-two")
     with SessionLocal() as db:
@@ -150,10 +150,14 @@ def test_surprise_checkout_reserves_group_before_stripe_call():
         with patch("app.billing.stripe.Customer.create") as customer_create, patch(
             "app.billing.stripe.checkout.Session.create"
         ) as checkout_create:
-            customer_create.return_value = SimpleNamespace(id="cus_surprise")
-            checkout_create.return_value = SimpleNamespace(
-                id="cs_surprise", url="https://checkout.test"
-            )
+            customer_create.side_effect = [
+                SimpleNamespace(id="cus_surprise_one"),
+                SimpleNamespace(id="cus_surprise_two"),
+            ]
+            checkout_create.side_effect = [
+                SimpleNamespace(id="cs_surprise_one", url="https://checkout.test/one"),
+                SimpleNamespace(id="cs_surprise_two", url="https://checkout.test/two"),
+            ]
             assert client.post(
                 "/api/billing/checkout-sessions", headers=headers,
                 json={"booking_id": first_id},
@@ -164,8 +168,8 @@ def test_surprise_checkout_reserves_group_before_stripe_call():
                 "/api/billing/checkout-sessions", headers=second_headers,
                 json={"booking_id": second_id},
             )
-        assert response.status_code == 409
-        assert checkout_create.call_count == 1
+        assert response.status_code == 201
+        assert checkout_create.call_count == 2
     finally:
         settings.stripe_secret_key = original_key
 

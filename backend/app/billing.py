@@ -235,9 +235,9 @@ def create_checkout_session(
 
     stripe_client_ready()
 
-    # Serialize checkout creation for this group.  The partial unique index is
-    # the durable second line of defence when multiple API replicas receive
-    # requests at exactly the same time.
+    # Serialize checkout creation for this group. The durable constraint only
+    # applies once Stripe has confirmed a payment; an unpaid checkout never
+    # reserves the date or makes it visible to the group.
     db.scalar(
         select(MusicianProfile)
         .where(MusicianProfile.id == booking.musician_id)
@@ -248,20 +248,6 @@ def create_checkout_session(
         MusicianBusyDate.busy_date == booking.event_date,
     )):
         raise HTTPException(409, "La fecha ya no está disponible; no se iniciará otro pago")
-    reserved_booking = db.scalar(
-        select(Booking.id).where(
-            Booking.musician_id == booking.musician_id,
-            Booking.event_date == booking.event_date,
-            Booking.booking_type == "surprise",
-            Booking.payment_status.in_(("checkout_created", "validating_payment", "paid")),
-            Booking.id != booking.id,
-        )
-    )
-    if reserved_booking:
-        raise HTTPException(
-            409,
-            "La fecha está apartada temporalmente mientras se valida otro pago",
-        )
     if booking.total_cents <= 0:
         raise HTTPException(409, "La contratación no tiene un total válido")
     if booking.stripe_checkout_session_id:
@@ -282,20 +268,6 @@ def create_checkout_session(
                 stripe.checkout.Session.expire(previous.id)
         except stripe.error.StripeError:
             pass
-
-    # Persist the reservation before calling Stripe.  Without this commit a
-    # second request handled by another API instance could create a second
-    # checkout for the same surprise group and date.
-    if booking.booking_type == "surprise":
-        booking.payment_status = "checkout_created"
-        try:
-            db.commit()
-        except IntegrityError:
-            db.rollback()
-            raise HTTPException(
-                409,
-                "Otro cliente acaba de apartar este Grupo Sorpresa para esa fecha",
-            )
 
     customer = customer_for(user, db)
     try:
@@ -338,9 +310,6 @@ def create_checkout_session(
             } if booking.booking_type == "surprise" else {}),
         )
     except stripe.error.StripeError:
-        if booking.booking_type == "surprise" and not booking.stripe_checkout_session_id:
-            booking.payment_status = "pending"
-            db.commit()
         raise
     booking.stripe_checkout_session_id = session.id
     booking.payment_status = "checkout_created"

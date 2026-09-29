@@ -762,7 +762,7 @@ def booking_review_state(booking: Booking) -> tuple[bool, str]:
 
 
 def booking_chat_state(booking: Booking) -> tuple[bool, str]:
-    if booking.booking_type == "surprise" and booking.payment_status != "paid":
+    if booking.payment_status != "paid":
         return False, "El chat se habilitará cuando Stripe confirme el pago."
     timezone = ZoneInfo(settings.event_timezone)
     now = datetime.now(timezone)
@@ -1562,31 +1562,15 @@ def musician_availability(
     client = db.scalar(
         select(ClientProfile).where(ClientProfile.user_id == user.id)
     )
-    validating_booking = db.scalar(
-        select(Booking).where(
-            Booking.musician_id == musician_id,
-            Booking.event_date == selected_date,
-            Booking.payment_status == "validating_payment",
-        )
-    )
     busy = db.scalar(
         select(MusicianBusyDate).where(
             MusicianBusyDate.musician_id == musician_id,
             MusicianBusyDate.busy_date == selected_date,
         )
     )
-    reserved_by_current_user = bool(
-        validating_booking and validating_booking.client.user_id == user.id
-    )
-    available = busy is None and validating_booking is None
-    if reserved_by_current_user:
-        message = (
-            "Estamos validando tu pago. Esta fecha ya está apartada por usted; "
-            "favor de verificar unos minutos más para confirmar la contratación."
-        )
-    elif validating_booking:
-        message = "La fecha está apartada temporalmente mientras se valida un pago."
-    elif available:
+    reserved_by_current_user = False
+    available = busy is None
+    if available:
         message = "La agrupación está disponible en esta fecha."
     else:
         message = "Lo sentimos, el grupo ya tiene compromiso ese día."
@@ -1646,18 +1630,6 @@ def create_booking(
         raise HTTPException(
             409, "Lo sentimos, el grupo ya tiene compromiso ese día."
         )
-    validating_booking = db.scalar(
-        select(Booking.id).where(
-            Booking.musician_id == musician.id,
-            Booking.event_date == data.event_date,
-            Booking.payment_status == "validating_payment",
-        )
-    )
-    if validating_booking:
-        raise HTTPException(
-            409,
-            "La fecha está apartada temporalmente mientras se valida un pago",
-        )
     start_minutes = data.start_time.hour * 60 + data.start_time.minute
     end_minutes = data.end_time.hour * 60 + data.end_time.minute
     requested_minutes = end_minutes - start_minutes
@@ -1686,11 +1658,6 @@ def create_booking(
     db.add(booking)
     try:
         db.flush()
-        enqueue(db, user_id=musician.user_id,
-                event_key=f"booking_created:{booking.id}", kind="booking",
-                title="Nueva solicitud de contratación",
-                body="Un cliente solicitó contratar a tu agrupación.",
-                data={"booking_id": str(booking.id)})
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -1845,7 +1812,7 @@ def create_surprise_booking(
     committed_ids = set(db.scalars(
         select(Booking.musician_id).where(
             Booking.event_date == data.event_date,
-            Booking.payment_status.in_(("paid", "validating_payment", "checkout_created")),
+            Booking.payment_status == "paid",
         )
     ).all())
 
@@ -1924,7 +1891,7 @@ def get_my_bookings(
         booking_query()
         .where(
             Booking.musician_id == profile.id,
-            or_(Booking.booking_type != "surprise", Booking.payment_status == "paid"),
+            Booking.payment_status == "paid",
         )
         .order_by(Booking.created_at.desc(), Booking.id.desc())
     ).all()

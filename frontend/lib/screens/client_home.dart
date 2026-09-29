@@ -34,6 +34,7 @@ class _ClientHomeState extends State<ClientHome> {
   Map<String, dynamic>? clientProfile;
   bool loading = true;
   bool profileLoading = true;
+  bool openingCheckout = false;
   Timer? debounce;
 
   @override
@@ -1253,7 +1254,11 @@ class _ClientHomeState extends State<ClientHome> {
                                     }
                                   },
                                   icon: const Icon(Icons.lock_outline),
-                                  label: const Text('Ir al pago seguro'),
+                                  label: Text(
+                                    openingCheckout
+                                        ? 'Abriendo pago seguro…'
+                                        : 'Ir al pago seguro',
+                                  ),
                                 ),
                                 const SizedBox(height: 8),
                                 OutlinedButton.icon(
@@ -1321,17 +1326,32 @@ class _ClientHomeState extends State<ClientHome> {
   }
 
   Future<void> _openBookingCheckout(int bookingId) async {
-    final checkout =
-        await widget.api.post('/api/billing/checkout-sessions', {
-              'booking_id': bookingId,
-            })
-            as Map<String, dynamic>;
-    final opened = await launchUrl(
-      Uri.parse(checkout['url'] as String),
-      mode: LaunchMode.externalApplication,
-    );
-    if (!opened) {
-      throw ApiException('No fue posible abrir la pantalla de pago.', 0);
+    if (openingCheckout) return;
+    setState(() => openingCheckout = true);
+    try {
+      final checkout =
+          await widget.api.post('/api/billing/checkout-sessions', {
+                'booking_id': bookingId,
+              })
+              as Map<String, dynamic>;
+      final url = Uri.tryParse(checkout['url']?.toString() ?? '');
+      if (url == null || url.scheme != 'https' || url.host.isEmpty) {
+        throw const FormatException('URL de pago inválida');
+      }
+      var opened = await launchUrl(url, mode: LaunchMode.externalApplication);
+      if (!opened) {
+        opened = await launchUrl(url, mode: LaunchMode.inAppBrowserView);
+      }
+      if (!opened) throw const FormatException('No se pudo abrir el pago');
+    } on ApiException {
+      rethrow;
+    } catch (_) {
+      throw ApiException(
+        'No se pudo abrir el pago seguro. Revisa tu conexión e inténtalo nuevamente.',
+        0,
+      );
+    } finally {
+      if (mounted) setState(() => openingCheckout = false);
     }
   }
 
@@ -1428,7 +1448,7 @@ class _ClientHomeState extends State<ClientHome> {
                                         'validating_payment') ...[
                                   const SizedBox(height: 8),
                                   FilledButton.icon(
-                                    onPressed: () async {
+                                  onPressed: openingCheckout ? null : () async {
                                       try {
                                         await _openBookingCheckout(
                                           item['id'] as int,
@@ -1446,7 +1466,11 @@ class _ClientHomeState extends State<ClientHome> {
                                       }
                                     },
                                     icon: const Icon(Icons.payment),
-                                    label: const Text('Pagar ahora'),
+                                    label: Text(
+                                      openingCheckout
+                                          ? 'Abriendo pago…'
+                                          : 'Pagar ahora',
+                                    ),
                                   ),
                                 ],
                                 const SizedBox(height: 10),
@@ -1487,7 +1511,7 @@ class _ClientHomeState extends State<ClientHome> {
                                 const SizedBox(height: 8),
                                 if (item['can_review'] == true)
                                   FilledButton.icon(
-                                    onPressed: () async {
+                                    onPressed: openingCheckout ? null : () async {
                                       final result = await showModalBottomSheet<
                                         Map<String, dynamic>
                                       >(

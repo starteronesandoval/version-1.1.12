@@ -1,7 +1,7 @@
 name: balam_app
 description: Marketplace de agrupaciones musicales y clientes.
 publish_to: none
-version: 1.1.4+5
+version: 1.1.10+10
 
 environment:
   sdk: '>=3.7.0 <4.0.0'

@@ -71,14 +71,14 @@ def available(accounts):
     return result.json()["available"]
 
 
-def test_unpaid_requests_do_not_block_and_payment_validation_reserves_date(accounts):
+def test_unpaid_requests_and_payment_validation_do_not_reserve_date(accounts):
     first = request_booking(accounts)
     second = request_booking(accounts)
     assert first != second and available(accounts)
     with SessionLocal() as db:
         sync_checkout("checkout.session.completed", event(first, "unpaid"), db)
         db.commit()
-    assert not available(accounts)
+    assert available(accounts)
     status = client.get(
         f"/api/billing/bookings/{first}/status", headers=accounts[1]
     )
@@ -88,7 +88,7 @@ def test_unpaid_requests_do_not_block_and_payment_validation_reserves_date(accou
     with patch.object(settings, "stripe_webhook_secret", "whsec_calendar"):
         assert client.post("/api/billing/webhooks/stripe", json={"type": "checkout.session.completed",
                            "data": {"object": event(first)}}).status_code == 400
-    assert not available(accounts)
+    assert available(accounts)
     with SessionLocal() as db:
         sync_checkout("checkout.session.async_payment_succeeded", event(first), db)
         db.commit()

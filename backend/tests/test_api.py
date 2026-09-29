@@ -161,15 +161,13 @@ def test_full_registration_and_search_flow():
     assert sold_date.json()["available"] is True
     musician_notifications = client.get("/api/musicians/me/bookings", headers=mh)
     assert musician_notifications.status_code == 200
-    assert musician_notifications.json()[0]["event_date"] == "2099-10-19"
-    assert musician_notifications.json()[0]["start_time"] == "18:30:00"
-    assert musician_notifications.json()[0]["is_new_sale"] is True
+    assert musician_notifications.json() == []
     client_bookings = client.get("/api/clients/me/bookings", headers=ch)
     assert client_bookings.status_code == 200
     booking_id = booking.json()["id"]
     locked_chat = client.get(f"/api/bookings/{booking_id}/messages", headers=ch)
     assert locked_chat.status_code == 403
-    assert "se activará durante el evento" in locked_chat.json()["detail"]
+    assert "Stripe confirme el pago" in locked_chat.json()["detail"]
     with patch(
         "app.main.booking_chat_state",
         return_value=(True, "Chat activo durante el horario del evento."),
@@ -656,8 +654,8 @@ def test_surprise_group_is_opt_in_matched_and_hidden_until_payment():
     assert surprise["surprise_revealed"] is True
 
 
-def test_surprise_simulation_considers_every_eligible_group_and_reserves_one():
-    """End-to-end matching simulation with two clients and mixed group data."""
+def test_surprise_simulation_considers_every_eligible_group_without_reserving_one():
+    """Unpaid Checkout must not reserve a group or block its calendar date."""
     first_headers = _auth_headers("simulacion-cliente-1@example.com", "client")
     second_headers = _auth_headers("simulacion-cliente-2@example.com", "client")
     event_day = date(2099, 12, 15)
@@ -764,7 +762,6 @@ def test_surprise_simulation_considers_every_eligible_group_and_reserves_one():
     with patch("app.main.secrets.choice", side_effect=choose_second):
         second = client.post("/api/bookings/surprise", headers=second_headers, json=request)
     assert second.status_code == 201, second.text
-    # The first choice is reserved at checkout, so only the other eligible
-    # group remains for the next client.
-    assert selected_id not in second_candidates[0]
-    assert expected_ids - {selected_id} <= second_candidates[0]
+    # An open checkout is only a quote. Every eligible group remains available
+    # until Stripe sends the signed paid confirmation.
+    assert expected_ids <= second_candidates[0]
