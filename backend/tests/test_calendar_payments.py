@@ -19,7 +19,7 @@ from app.config import settings
 from app.database import Base, SessionLocal, engine
 from app.main import app
 from app.models import (User, UserRole, ClientProfile, MusicianProfile,
-                        Booking, MusicianBusyDate)
+                        Booking, MusicianBusyDate, UserNotification)
 
 client = TestClient(app)
 EVENT_DATE = date(2099, 10, 19)
@@ -78,6 +78,13 @@ def test_unpaid_requests_and_payment_validation_do_not_reserve_date(accounts):
     with SessionLocal() as db:
         sync_checkout("checkout.session.completed", event(first, "unpaid"), db)
         db.commit()
+        # A request is deliberately invisible to the group until Stripe
+        # confirms payment.  This prevents a contract alert for an unpaid
+        # Checkout session.
+        assert not db.scalars(select(UserNotification).where(
+            UserNotification.user_id == db.get(Booking, first).musician.user_id,
+            UserNotification.event_key == f"booking_paid:{first}",
+        )).first()
     assert available(accounts)
     status = client.get(
         f"/api/billing/bookings/{first}/status", headers=accounts[1]
@@ -97,6 +104,10 @@ def test_unpaid_requests_and_payment_validation_do_not_reserve_date(accounts):
         db.commit()
         assert db.get(Booking, first).payment_status == "paid"
         assert len(db.scalars(select(MusicianBusyDate)).all()) == 1
+        assert db.scalars(select(UserNotification).where(
+            UserNotification.user_id == db.get(Booking, first).musician.user_id,
+            UserNotification.event_key == f"booking_paid:{first}",
+        )).one().title == "Contratación confirmada"
     assert not available(accounts)
     assert client.put(f"/api/musicians/me/busy-dates/{EVENT_DATE}", headers=accounts[2],
                       json={"busy": False}).status_code == 409
@@ -141,6 +152,29 @@ def test_manual_dates_preserved_but_unpaid_requests_can_be_released(accounts):
     assert available(accounts)
     with SessionLocal() as db:
         assert db.get(Booking, booking_id).payment_status == "pending"
+
+
+@pytest.mark.parametrize("event_type", [
+    "checkout.session.async_payment_failed", "checkout.session.expired",
+])
+def test_failed_or_expired_checkout_never_confirms_or_notifies_group(accounts, event_type):
+    booking_id = request_booking(accounts)
+    with SessionLocal() as db:
+        sync_checkout(event_type, event(booking_id, "unpaid"), db)
+        db.commit()
+        booking = db.get(Booking, booking_id)
+        assert booking.payment_status == (
+            "failed" if event_type.endswith("failed") else "expired"
+        )
+        assert not db.scalars(select(MusicianBusyDate).where(
+            MusicianBusyDate.musician_id == booking.musician_id,
+            MusicianBusyDate.busy_date == booking.event_date,
+        )).first()
+        assert not db.scalars(select(UserNotification).where(
+            UserNotification.user_id == booking.musician.user_id,
+            UserNotification.event_key == f"booking_paid:{booking_id}",
+        )).first()
+    assert available(accounts)
 
 
 def test_refund_error_rolls_back_and_retries_with_same_key(accounts):
