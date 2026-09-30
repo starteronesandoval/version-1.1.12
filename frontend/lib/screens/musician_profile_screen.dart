@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -45,8 +44,11 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
       'member_count',
       'hourly_rate',
       'local_hourly_rate',
-      'low_season_hourly_rate',
-      'low_season_dates',
+      'distance_compensation_local',
+      'distance_compensation_medium',
+      'distance_compensation_medium_high',
+      'distance_compensation_high',
+      'distance_compensation_long',
       'minimum_booking_hours',
       'subwoofer_count',
       'mid_speaker_count',
@@ -171,11 +173,12 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
 
   Future<void> _refreshPayoutDestinationFromStripe() async {
     try {
-      final refreshed = await widget.api.post(
-            '/api/musicians/me/payout-destination/refresh',
-            {},
-          )
-          as Map<String, dynamic>;
+      final refreshed =
+          await widget.api.post(
+                '/api/musicians/me/payout-destination/refresh',
+                {},
+              )
+              as Map<String, dynamic>;
       if (mounted) setState(() => payoutDestination = refreshed);
     } catch (_) {
       // The webhook can update this state shortly after Stripe finishes.
@@ -189,13 +192,12 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
               as Map<String, dynamic>;
       final url = response['url']?.toString();
       final uri = url == null ? null : Uri.tryParse(url);
-      if (uri == null || uri.scheme != 'https' || !uri.host.endsWith('stripe.com')) {
+      if (uri == null ||
+          uri.scheme != 'https' ||
+          !uri.host.endsWith('stripe.com')) {
         throw const FormatException('Stripe no devolvió un enlace seguro.');
       }
-      final opened = await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!opened) throw const FormatException();
     } on ApiException catch (error) {
       if (mounted) {
@@ -205,174 +207,19 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
       }
     } on FormatException catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              error.message?.toString() ??
-                  'No se pudo abrir el registro seguro de Stripe.',
-            ),
-          ),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
       }
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No se pudo abrir el registro seguro de Stripe.')),
+          const SnackBar(
+            content: Text('No se pudo abrir el registro seguro de Stripe.'),
+          ),
         );
       }
     }
-  }
-
-  Future<void> _editPayoutDestination() async {
-    var type = payoutDestination?['destination_type']?.toString() ?? 'clabe';
-    final number = TextEditingController();
-    var saving = false;
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: const Color(0xFF17110B),
-      showDragHandle: true,
-      builder:
-          (sheetContext) => StatefulBuilder(
-            builder:
-                (_, setSheetState) => Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    20,
-                    4,
-                    20,
-                    MediaQuery.viewInsetsOf(sheetContext).bottom + 24,
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const Text(
-                        'Cuenta para recibir tu dinero',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 21,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Se habilitó porque Stripe confirmó tu primer contrato pagado. '
-                        'El número se guarda cifrado y después sólo verás sus últimos 4 dígitos.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: .68),
-                        ),
-                      ),
-                      const SizedBox(height: 18),
-                      DropdownButtonFormField<String>(
-                        initialValue: type,
-                        decoration: const InputDecoration(
-                          labelText: 'Tipo de cuenta',
-                        ),
-                        items: const [
-                          DropdownMenuItem(
-                            value: 'clabe',
-                            child: Text('CLABE interbancaria'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'debit_card',
-                            child: Text('Tarjeta de débito'),
-                          ),
-                        ],
-                        onChanged:
-                            saving
-                                ? null
-                                : (value) {
-                                  if (value != null) {
-                                    setSheetState(() => type = value);
-                                  }
-                                },
-                      ),
-                      const SizedBox(height: 13),
-                      TextField(
-                        controller: number,
-                        enabled: !saving,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [
-                          FilteringTextInputFormatter.digitsOnly,
-                        ],
-                        maxLength: type == 'clabe' ? 18 : 16,
-                        obscureText: true,
-                        decoration: InputDecoration(
-                          labelText:
-                              type == 'clabe'
-                                  ? 'CLABE de 18 dígitos'
-                                  : 'Tarjeta de débito de 16 dígitos',
-                          prefixIcon: const Icon(
-                            Icons.account_balance_outlined,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      FilledButton.icon(
-                        onPressed:
-                            saving
-                                ? null
-                                : () async {
-                                  final expected = type == 'clabe' ? 18 : 16;
-                                  if (number.text.length != expected) {
-                                    ScaffoldMessenger.of(
-                                      sheetContext,
-                                    ).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          'Escribe los $expected dígitos.',
-                                        ),
-                                      ),
-                                    );
-                                    return;
-                                  }
-                                  setSheetState(() => saving = true);
-                                  try {
-                                    final saved =
-                                        await widget.api.put(
-                                              '/api/musicians/me/payout-destination',
-                                              {
-                                                'destination_type': type,
-                                                'account_number': number.text,
-                                              },
-                                            )
-                                            as Map<String, dynamic>;
-                                    payoutDestination = saved;
-                                    if (!sheetContext.mounted) return;
-                                    Navigator.pop(sheetContext);
-                                    if (mounted) {
-                                      setState(() {});
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        const SnackBar(
-                                          content: Text(
-                                            'Cuenta de depósito guardada',
-                                          ),
-                                        ),
-                                      );
-                                    }
-                                  } on ApiException catch (error) {
-                                    if (sheetContext.mounted) {
-                                      ScaffoldMessenger.of(
-                                        sheetContext,
-                                      ).showSnackBar(
-                                        SnackBar(content: Text(error.message)),
-                                      );
-                                      setSheetState(() => saving = false);
-                                    }
-                                  }
-                                },
-                        icon: const Icon(Icons.lock_outline),
-                        label: Text(saving ? 'Guardando…' : 'Guardar cuenta'),
-                      ),
-                    ],
-                  ),
-                ),
-          ),
-    );
-    number.dispose();
   }
 
   String _dateKey(DateTime value) =>
@@ -557,7 +404,11 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
     'member_count',
     'hourly_rate',
     'local_hourly_rate',
-    'low_season_hourly_rate',
+    'distance_compensation_local',
+    'distance_compensation_medium',
+    'distance_compensation_medium_high',
+    'distance_compensation_high',
+    'distance_compensation_long',
     'minimum_booking_hours',
     'subwoofer_count',
     'mid_speaker_count',
@@ -568,7 +419,11 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
   bool decimal(String key) => const {
     'hourly_rate',
     'local_hourly_rate',
-    'low_season_hourly_rate',
+    'distance_compensation_local',
+    'distance_compensation_medium',
+    'distance_compensation_medium_high',
+    'distance_compensation_high',
+    'distance_compensation_long',
   }.contains(key);
 
   String label(String key) =>
@@ -584,9 +439,14 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
         'member_count': 'Cantidad de integrantes',
         'hourly_rate': 'Costo normal por hora',
         'local_hourly_rate': 'Costo local por hora (opcional)',
-        'low_season_hourly_rate': 'Costo por hora en temporada baja (opcional)',
-        'low_season_dates':
-            'Fechas de temporada baja (AAAA-MM-DD, separadas por coma)',
+        'distance_compensation_local': 'Compensación traslado: Local (0–5 km)',
+        'distance_compensation_medium':
+            'Compensación traslado: Media (6–15 km)',
+        'distance_compensation_medium_high':
+            'Compensación traslado: Media-alta (16–30 km)',
+        'distance_compensation_high': 'Compensación traslado: Alta (31–60 km)',
+        'distance_compensation_long':
+            'Compensación traslado: Larga distancia (+60 km)',
         'minimum_booking_hours': 'Contrato mínimo (horas)',
         'subwoofer_count': 'Subwoofers',
         'mid_speaker_count': 'Bocinas de medios',
@@ -596,76 +456,6 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
         'radio_servicio_sorpresa_km':
             'Radio de servicio sorpresa (máximo 30 km)',
       }[key]!;
-
-  bool _isEligibleLowSeasonDate(DateTime value) =>
-      value.month != DateTime.may &&
-      value.month != DateTime.december &&
-      value.weekday <= DateTime.thursday;
-
-  DateTime _nextEligibleLowSeasonDate(DateTime value) {
-    var candidate = DateTime(value.year, value.month, value.day);
-    while (!_isEligibleLowSeasonDate(candidate)) {
-      candidate = candidate.add(const Duration(days: 1));
-    }
-    return candidate;
-  }
-
-  List<DateTime> _lowSeasonDates() =>
-      fields['low_season_dates']!.text
-          .split(',')
-          .map((value) => DateTime.tryParse(value.trim()))
-          .whereType<DateTime>()
-          .toList();
-
-  void _setLowSeasonDates(Iterable<DateTime> dates) {
-    final sorted =
-        dates
-            .where(_isEligibleLowSeasonDate)
-            .map((value) => DateTime(value.year, value.month, value.day))
-            .toSet()
-            .toList()
-          ..sort();
-    fields['low_season_dates']!.text = sorted
-        .map((value) => value.toIso8601String().substring(0, 10))
-        .join(', ');
-    setState(() {});
-  }
-
-  Future<void> _addSpecificLowSeasonDate() async {
-    final now = DateTime.now();
-    final selected = await showDatePicker(
-      context: context,
-      firstDate: DateTime(now.year, now.month, now.day),
-      lastDate: DateTime(now.year + 1, 12, 31),
-      initialDate: _nextEligibleLowSeasonDate(now),
-      selectableDayPredicate: _isEligibleLowSeasonDate,
-      helpText: 'Elige un lunes, martes, miércoles o jueves',
-    );
-    if (selected != null) _setLowSeasonDates([..._lowSeasonDates(), selected]);
-  }
-
-  Future<void> _addMonthWeekdays() async {
-    final now = DateTime.now();
-    final selected = await showDatePicker(
-      context: context,
-      firstDate: DateTime(now.year, now.month, now.day),
-      lastDate: DateTime(now.year + 1, 12, 31),
-      initialDate: _nextEligibleLowSeasonDate(now),
-      selectableDayPredicate: _isEligibleLowSeasonDate,
-      helpText: 'Elige cualquier día del mes a programar',
-    );
-    if (selected == null) return;
-    final first = DateTime(selected.year, selected.month);
-    final weekdays = <DateTime>[];
-    for (
-      var day = first;
-      day.month == first.month;
-      day = day.add(const Duration(days: 1))
-    ) {
-      if (_isEligibleLowSeasonDate(day)) weekdays.add(day);
-    }
-    _setLowSeasonDates([..._lowSeasonDates(), ...weekdays]);
-  }
 
   Future<void> save() async {
     if (!form.currentState!.validate()) return;
@@ -682,12 +472,6 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
                                 : int.parse(entry.value.text))
                             : entry.key == 'equipment_brands'
                             ? entry.value.text.split(',')
-                            : entry.key == 'low_season_dates'
-                            ? entry.value.text
-                                .split(',')
-                                .map((value) => value.trim())
-                                .where((value) => value.isNotEmpty)
-                                .toList()
                             : entry.value.text,
                 'includes_sound': sound,
                 'surprise_group_enabled': surpriseGroupEnabled,
@@ -1571,8 +1355,11 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
                     const optional = {
                       'admin_phone',
                       'local_hourly_rate',
-                      'low_season_hourly_rate',
-                      'low_season_dates',
+                      'distance_compensation_local',
+                      'distance_compensation_medium',
+                      'distance_compensation_medium_high',
+                      'distance_compensation_high',
+                      'distance_compensation_long',
                     };
                     if (value == null || value.trim().isEmpty) {
                       if (entry.key == 'admin_phone' &&
@@ -1587,33 +1374,6 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
                   },
                 ),
                 const SizedBox(height: 13),
-                if (entry.key == 'low_season_dates') ...[
-                  Text(
-                    'No se permiten viernes, sábados, domingos, mayo ni diciembre.',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: .65),
-                      fontSize: 12,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      OutlinedButton.icon(
-                        onPressed: _addMonthWeekdays,
-                        icon: const Icon(Icons.date_range_outlined),
-                        label: const Text('Lunes a jueves del mes'),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: _addSpecificLowSeasonDate,
-                        icon: const Icon(Icons.add_circle_outline),
-                        label: const Text('Agregar fecha'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 13),
-                ],
                 if (entry.key == 'group_type') ...[
                   const Text(
                     'Tema visual de tu agrupación',

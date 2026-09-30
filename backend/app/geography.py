@@ -7,6 +7,8 @@ an approximation of the municipality's municipal seat, not a street address.
 
 from functools import lru_cache
 import json
+import urllib.parse
+import urllib.request
 from pathlib import Path
 import re
 import unicodedata
@@ -49,3 +51,24 @@ def municipality_coordinates(
     normalized_state = normalize_place(state)
     normalized_state = STATE_ALIASES.get(normalized_state, normalized_state)
     return _municipal_capitals().get((normalized_state, normalize_place(municipality)))
+
+
+def event_address_coordinates(
+    street: str, number: str, municipality: str, state: str, city: str,
+) -> tuple[float, float] | None:
+    """Resolve a full Mexican event address; never substitute the client location."""
+    query = ", ".join((f"{street} {number}", municipality, city, state, "México"))
+    request = urllib.request.Request(
+        "https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode({
+            "q": query, "format": "jsonv2", "limit": 1, "countrycodes": "mx",
+        }),
+        headers={"User-Agent": "Garibaldi/1.1 event-address-geocoder"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            matches = json.loads(response.read().decode("utf-8"))
+        if matches:
+            return float(matches[0]["lat"]), float(matches[0]["lon"])
+    except (OSError, ValueError, KeyError, IndexError):
+        return None
+    return None

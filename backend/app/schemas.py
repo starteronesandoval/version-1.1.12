@@ -120,8 +120,11 @@ class MusicianProfileUpsert(BaseModel):
     member_count: int = Field(ge=1, le=100)
     hourly_rate: float = Field(ge=0)
     local_hourly_rate: float | None = Field(default=None, ge=0)
-    low_season_hourly_rate: float | None = Field(default=None, ge=0)
-    low_season_dates: list[date] = Field(default_factory=list)
+    distance_compensation_local: float = Field(default=0, ge=0)
+    distance_compensation_medium: float = Field(default=0, ge=0)
+    distance_compensation_medium_high: float = Field(default=0, ge=0)
+    distance_compensation_high: float = Field(default=0, ge=0)
+    distance_compensation_long: float = Field(default=0, ge=0)
     minimum_booking_hours: int = Field(default=2, ge=1, le=12)
     includes_sound: bool = False
     subwoofer_count: int = Field(default=0, ge=0, le=100)
@@ -135,15 +138,6 @@ class MusicianProfileUpsert(BaseModel):
     base_latitude: float | None = Field(default=None, ge=-90, le=90)
     base_longitude: float | None = Field(default=None, ge=-180, le=180)
     radio_servicio_sorpresa_km: int = Field(default=30, ge=1, le=30)
-
-    @model_validator(mode="after")
-    def validate_low_season_dates(self):
-        for selected_date in self.low_season_dates:
-            if selected_date.month in {5, 12}:
-                raise ValueError("Mayo y diciembre no pueden programarse como temporada baja")
-            if selected_date.weekday() >= 4:
-                raise ValueError("La temporada baja sólo puede aplicarse de lunes a jueves")
-        return self
 
     @model_validator(mode="after")
     def validate_surprise_location(self):
@@ -238,15 +232,16 @@ class BookingCreate(BaseModel):
     venue: str = Field(min_length=3, max_length=300)
     start_time: time
     end_time: time
-    event_latitude: float | None = Field(default=None, ge=-90, le=90)
-    event_longitude: float | None = Field(default=None, ge=-180, le=180)
+    event_city: str = Field(min_length=2, max_length=120)
+    event_municipality: str = Field(min_length=2, max_length=120)
+    event_state: str = Field(min_length=2, max_length=120)
+    event_street: str = Field(min_length=2, max_length=180)
+    event_number: str = Field(min_length=1, max_length=40)
 
     @model_validator(mode="after")
     def validate_schedule(self):
         if self.end_time <= self.start_time:
             raise ValueError("El horario final debe ser posterior al horario de inicio")
-        if (self.event_latitude is None) != (self.event_longitude is None):
-            raise ValueError("Captura latitud y longitud del evento juntas")
         return self
 
 
@@ -302,6 +297,16 @@ class BookingResponse(BaseModel):
     surprise_genre: str | None = None
     event_latitude: float | None = None
     event_longitude: float | None = None
+    event_city: str | None = None
+    event_municipality: str | None = None
+    event_state: str | None = None
+    event_street: str | None = None
+    event_number: str | None = None
+    haversine_distance_km: float | None = None
+    corrected_distance_km: float | None = None
+    distance_zone: str | None = None
+    distance_compensation_cents: int = 0
+    base_price_cents: int = 0
     distancia_evento_km: float | None = None
     surprise_revealed: bool = True
     duration_minutes: int

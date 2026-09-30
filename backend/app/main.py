@@ -46,7 +46,7 @@ from .billing import (
 )
 from .config import settings
 from .database import SessionLocal, get_db
-from .geography import municipality_coordinates
+from .geography import event_address_coordinates, municipality_coordinates
 from .social import router as social_router
 from .notifications import router as notifications_router, enqueue, dispatch_pending
 from .platinum import router as platinum_router, public_certificate, can_manage_platinum, request_state
@@ -220,36 +220,11 @@ async def automatic_payout_release_loop() -> None:
 async def push_delivery_loop() -> None:
     while True:
         try:
-            await asyncio.to_thread(enqueue_monthly_low_season_reminders)
             await asyncio.to_thread(enqueue_payment_validation_reminders)
             await asyncio.to_thread(dispatch_pending)
         except Exception:
             logger.exception("Falló el envío de avisos")
         await asyncio.sleep(settings.push_scan_seconds)
-
-
-def enqueue_monthly_low_season_reminders() -> None:
-    """Prompt active musicians on the first local day of each eligible month."""
-    today = datetime.now(ZoneInfo(settings.event_timezone)).date()
-    if today.day != 1 or today.month in {5, 12}:
-        return
-    month_key = today.strftime("%Y-%m")
-    with SessionLocal() as db:
-        musician_ids = db.scalars(select(User.id).where(
-            User.role == UserRole.musician, User.is_active.is_(True)
-        )).all()
-        for user_id in musician_ids:
-            enqueue(
-                db,
-                user_id=user_id,
-                event_key=f"low_season_offer:{month_key}",
-                kind="pricing",
-                title="Programa ofertas de temporada baja",
-                body=("¿Quieres ofrecer precio especial este mes? Puedes elegir "
-                      "lunes a jueves o fechas específicas."),
-                data={"month": month_key, "action": "low_season_pricing"},
-            )
-        db.commit()
 
 
 def enqueue_payment_validation_reminders() -> None:
@@ -389,13 +364,7 @@ def values(raw: str) -> list[str]:
 def selected_hourly_rate(
     musician: MusicianProfile, client: ClientProfile, event_date: date
 ) -> tuple[float, str]:
-    """Select the contract rate; low season always wins over locality."""
-    try:
-        low_season_dates = {date.fromisoformat(value) for value in values(musician.low_season_dates)}
-    except ValueError:
-        low_season_dates = set()
-    if musician.low_season_hourly_rate is not None and event_date in low_season_dates:
-        return float(musician.low_season_hourly_rate), "low_season"
+    """Select the standard or explicitly configured local hourly rate."""
     musician_places = {value.strip().casefold() for value in (musician.city, musician.municipality) if value}
     client_places = {value.strip().casefold() for value in (client.city, client.municipality) if value}
     if musician.local_hourly_rate is not None and musician_places.intersection(client_places):
@@ -403,7 +372,27 @@ def selected_hourly_rate(
     return float(musician.hourly_rate), "normal"
 
 
-def booking_price_snapshot(hourly_rate: float, start_time, end_time) -> dict:
+def distance_multiplier(haversine_km: float) -> Decimal:
+    if haversine_km <= 10: return Decimal("1.30")
+    if haversine_km <= 25: return Decimal("1.50")
+    if haversine_km <= 50: return Decimal("1.60")
+    return Decimal("1.70")
+
+
+def distance_zone(corrected_km: float) -> str:
+    if corrected_km <= 5: return "local"
+    if corrected_km <= 15: return "medium"
+    if corrected_km <= 30: return "medium_high"
+    if corrected_km <= 60: return "high"
+    return "long"
+
+
+def distance_compensation(musician: MusicianProfile, zone: str) -> int:
+    field = f"distance_compensation_{zone}"
+    return int((Decimal(str(getattr(musician, field))) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def booking_price_snapshot(hourly_rate: float, start_time, end_time, distance_compensation_cents: int = 0) -> dict:
     start_minutes = start_time.hour * 60 + start_time.minute
     end_minutes = end_time.hour * 60 + end_time.minute
     duration_minutes = end_minutes - start_minutes
@@ -412,10 +401,11 @@ def booking_price_snapshot(hourly_rate: float, start_time, end_time) -> dict:
             Decimal("1"), rounding=ROUND_HALF_UP
         )
     )
-    subtotal_cents = int(
+    base_price_cents = int(
         (Decimal(hourly_rate_cents) * Decimal(duration_minutes) / Decimal(60))
         .quantize(Decimal("1"), rounding=ROUND_HALF_UP)
     )
+    subtotal_cents = base_price_cents + distance_compensation_cents
     base_service_fee_cents = int(
         (Decimal(subtotal_cents) * CLIENT_SURCHARGE_RATE).quantize(
             Decimal("1"), rounding=ROUND_HALF_UP
@@ -444,6 +434,8 @@ def booking_price_snapshot(hourly_rate: float, start_time, end_time) -> dict:
     return {
         "hourly_rate_cents": hourly_rate_cents,
         "duration_minutes": duration_minutes,
+        "base_price_cents": base_price_cents,
+        "distance_compensation_cents": distance_compensation_cents,
         "subtotal_cents": subtotal_cents,
         "service_fee_cents": service_fee_cents,
         "currency_conversion_fee_cents": currency_conversion_fee_cents,
@@ -601,16 +593,12 @@ def musician_out(
     hourly_rate = Decimal(str(profile.hourly_rate))
     local_hourly_rate = (Decimal(str(profile.local_hourly_rate))
                          if profile.local_hourly_rate is not None else None)
-    low_season_hourly_rate = (Decimal(str(profile.low_season_hourly_rate))
-                              if profile.low_season_hourly_rate is not None else None)
     if customer_price:
         hourly_rate = (hourly_rate * CLIENT_PRICE_MULTIPLIER).quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP
         )
         local_hourly_rate = ((local_hourly_rate * CLIENT_PRICE_MULTIPLIER).quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP) if local_hourly_rate is not None else None)
-        low_season_hourly_rate = ((low_season_hourly_rate * CLIENT_PRICE_MULTIPLIER).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP) if low_season_hourly_rate is not None else None)
     return MusicianProfileResponse(
         id=profile.id, user_id=profile.user_id, contact_name=profile.contact_name,
         city=profile.city, municipality=profile.municipality, state=profile.state,
@@ -619,9 +607,11 @@ def musician_out(
         member_count=profile.member_count,
         hourly_rate=float(hourly_rate),
         local_hourly_rate=float(local_hourly_rate) if local_hourly_rate is not None else None,
-        low_season_hourly_rate=(float(low_season_hourly_rate)
-                                 if low_season_hourly_rate is not None else None),
-        low_season_dates=[date.fromisoformat(item) for item in values(profile.low_season_dates)],
+        distance_compensation_local=float(profile.distance_compensation_local),
+        distance_compensation_medium=float(profile.distance_compensation_medium),
+        distance_compensation_medium_high=float(profile.distance_compensation_medium_high),
+        distance_compensation_high=float(profile.distance_compensation_high),
+        distance_compensation_long=float(profile.distance_compensation_long),
         minimum_booking_hours=profile.minimum_booking_hours,
         includes_sound=profile.includes_sound,
         subwoofer_count=profile.subwoofer_count, mid_speaker_count=profile.mid_speaker_count,
@@ -695,6 +685,16 @@ def booking_out(
         surprise_genre=booking.surprise_genre,
         event_latitude=booking.event_latitude,
         event_longitude=booking.event_longitude,
+        event_city=booking.event_city,
+        event_municipality=booking.event_municipality,
+        event_state=booking.event_state,
+        event_street=booking.event_street,
+        event_number=booking.event_number,
+        haversine_distance_km=booking.haversine_distance_km,
+        corrected_distance_km=booking.corrected_distance_km,
+        distance_zone=booking.distance_zone,
+        distance_compensation_cents=booking.distance_compensation_cents,
+        base_price_cents=booking.base_price_cents,
         distancia_evento_km=booking.surprise_distance_km,
         surprise_revealed=surprise_revealed,
         duration_minutes=booking.duration_minutes,
@@ -1236,7 +1236,7 @@ def upsert_musician(data: MusicianProfileUpsert, user: User = Depends(require_ro
     if not all((data.city, data.municipality, data.state)):
         raise HTTPException(422, "Completa ciudad, municipio y estado")
     admin_phone = normalize_phone(data.admin_phone) if data.admin_phone else None
-    payload = data.model_dump(exclude={"equipment_brands", "admin_phone", "low_season_dates"}); payload["equipment_brands"] = csv(data.equipment_brands)
+    payload = data.model_dump(exclude={"equipment_brands", "admin_phone"}); payload["equipment_brands"] = csv(data.equipment_brands)
     if data.surprise_group_enabled is None:
         payload.pop("surprise_group_enabled", None)
     # Older APKs do not know about geographic matching.  Preserve a saved
@@ -1261,7 +1261,6 @@ def upsert_musician(data: MusicianProfileUpsert, user: User = Depends(require_ro
         or (profile and profile.base_latitude is not None and profile.base_longitude is not None)
     ):
         raise HTTPException(422, "No pudimos ubicar el municipio de la agrupación. Verifica ciudad, municipio y estado.")
-    payload["low_season_dates"] = json.dumps([item.isoformat() for item in data.low_season_dates])
     if admin_phone:
         payload["admin_phone"] = admin_phone
     if profile:
@@ -1609,12 +1608,7 @@ def musician_availability(
         hourly_rate, price_type = selected_hourly_rate(
             profile, client, selected_date
         )
-        if price_type == "low_season":
-            price_message = (
-                "Este grupo ofrece un precio especial de temporada baja "
-                "para esta fecha."
-            )
-        elif price_type == "local":
+        if price_type == "local":
             price_message = (
                 "Este grupo ofrece precio local porque tu ciudad o municipio "
                 "coincide con el de la agrupación."
@@ -1668,6 +1662,23 @@ def create_booking(
             f"Esta agrupación acepta contratos a partir de "
             f"{musician.minimum_booking_hours} horas",
         )
+    event_coordinates = event_address_coordinates(
+        data.event_street, data.event_number, data.event_municipality,
+        data.event_state, data.event_city,
+    )
+    if not event_coordinates:
+        raise HTTPException(422, "No pudimos ubicar esa dirección. Verifica calle, número, municipio y estado.")
+    event_latitude, event_longitude = event_coordinates
+    raw_distance = event_distance_km(musician, event_latitude, event_longitude)
+    if raw_distance is None:
+        raise HTTPException(422, "La agrupación no tiene una ubicación base válida.")
+    corrected_distance = float(
+        (Decimal(str(raw_distance)) * distance_multiplier(raw_distance)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+    )
+    zone = distance_zone(corrected_distance)
+    compensation_cents = distance_compensation(musician, zone)
     hourly_rate, price_type = selected_hourly_rate(musician, client, data.event_date)
     booking = Booking(
         musician_id=musician.id,
@@ -1676,11 +1687,20 @@ def create_booking(
         venue=data.venue.strip(),
         start_time=data.start_time,
         end_time=data.end_time,
-        event_latitude=data.event_latitude,
-        event_longitude=data.event_longitude,
+        event_latitude=event_latitude,
+        event_longitude=event_longitude,
+        event_city=data.event_city.strip(),
+        event_municipality=data.event_municipality.strip(),
+        event_state=data.event_state.strip(),
+        event_street=data.event_street.strip(),
+        event_number=data.event_number.strip(),
+        haversine_distance_km=round(raw_distance, 2),
+        corrected_distance_km=corrected_distance,
+        distance_zone=zone,
+        distance_compensation_cents=compensation_cents,
         price_type=price_type,
         **booking_price_snapshot(
-            hourly_rate, data.start_time, data.end_time
+            hourly_rate, data.start_time, data.end_time, compensation_cents
         ),
     )
     db.add(booking)

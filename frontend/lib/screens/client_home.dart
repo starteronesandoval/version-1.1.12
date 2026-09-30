@@ -865,6 +865,11 @@ class _ClientHomeState extends State<ClientHome> {
     Map<String, dynamic>? availability;
     Map<String, dynamic>? bookingResult;
     final venue = TextEditingController();
+    final eventCity = TextEditingController();
+    final eventMunicipality = TextEditingController();
+    final eventState = TextEditingController();
+    final eventStreet = TextEditingController();
+    final eventNumber = TextEditingController();
     TimeOfDay? startTime;
     TimeOfDay? endTime;
     var checking = false;
@@ -898,7 +903,6 @@ class _ClientHomeState extends State<ClientHome> {
                   (availability?['hourly_rate'] as num?)?.toDouble() ??
                   (band['hourly_rate'] as num).toDouble();
               final hourlyRateCents = (selectedHourlyRate * 100).round();
-              final priceType = availability?['price_type']?.toString();
               final priceMessage = availability?['price_message']?.toString();
               final subtotalCents =
                   durationMinutes != null && durationMinutes > 0
@@ -1069,9 +1073,7 @@ class _ClientHomeState extends State<ClientHome> {
                                     child: Row(
                                       children: [
                                         Icon(
-                                          priceType == 'low_season'
-                                              ? Icons.local_offer_outlined
-                                              : Icons.location_city_outlined,
+                                          Icons.location_city_outlined,
                                           color: const Color(0xFFFFA000),
                                         ),
                                         const SizedBox(width: 10),
@@ -1143,6 +1145,50 @@ class _ClientHomeState extends State<ClientHome> {
                               hintText: 'Salón, domicilio o dirección',
                               prefixIcon: Icon(Icons.location_on_outlined),
                             ),
+                          ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: eventCity,
+                            decoration: const InputDecoration(
+                              labelText: 'Ciudad del evento',
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: eventMunicipality,
+                            decoration: const InputDecoration(
+                              labelText: 'Municipio del evento',
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: eventState,
+                            decoration: const InputDecoration(
+                              labelText: 'Estado del evento',
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: eventStreet,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Calle',
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              SizedBox(
+                                width: 110,
+                                child: TextField(
+                                  controller: eventNumber,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Número',
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                           const SizedBox(height: 12),
                           Row(
@@ -1236,6 +1282,12 @@ class _ClientHomeState extends State<ClientHome> {
                                     ? null
                                     : () async {
                                       if (venue.text.trim().length < 3 ||
+                                          eventCity.text.trim().length < 2 ||
+                                          eventMunicipality.text.trim().length <
+                                              2 ||
+                                          eventState.text.trim().length < 2 ||
+                                          eventStreet.text.trim().length < 2 ||
+                                          eventNumber.text.trim().isEmpty ||
                                           startTime == null ||
                                           endTime == null) {
                                         ScaffoldMessenger.of(
@@ -1243,7 +1295,7 @@ class _ClientHomeState extends State<ClientHome> {
                                         ).showSnackBar(
                                           const SnackBar(
                                             content: Text(
-                                              'Completa el lugar y ambos horarios.',
+                                              'Completa la dirección del evento y ambos horarios.',
                                             ),
                                           ),
                                         );
@@ -1273,6 +1325,17 @@ class _ClientHomeState extends State<ClientHome> {
                                                       selectedDate!,
                                                     ),
                                                     'venue': venue.text.trim(),
+                                                    'event_city':
+                                                        eventCity.text.trim(),
+                                                    'event_municipality':
+                                                        eventMunicipality.text
+                                                            .trim(),
+                                                    'event_state':
+                                                        eventState.text.trim(),
+                                                    'event_street':
+                                                        eventStreet.text.trim(),
+                                                    'event_number':
+                                                        eventNumber.text.trim(),
                                                     'start_time': _apiTime(
                                                       startTime!,
                                                     ),
@@ -1370,6 +1433,49 @@ class _ClientHomeState extends State<ClientHome> {
                                   'Tu contrato quedó creado. Al terminar el pago, Stripe validará la contratación y apartará la fecha para ti.',
                                   textAlign: TextAlign.center,
                                 ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  '${bookingResult!['event_street']} ${bookingResult!['event_number']}, ${bookingResult!['event_municipality']}, ${bookingResult!['event_state']}',
+                                  textAlign: TextAlign.center,
+                                ),
+                                Text(
+                                  'Distancia Haversine: ${(bookingResult!['haversine_distance_km'] as num?)?.toStringAsFixed(2) ?? '-'} km',
+                                ),
+                                Text(
+                                  'Distancia corregida: ${(bookingResult!['corrected_distance_km'] as num?)?.toStringAsFixed(2) ?? '-'} km',
+                                ),
+                                Text(
+                                  'Zona: ${bookingResult!['distance_zone'] ?? '-'}',
+                                ),
+                                _priceLine(
+                                  'Compensación por traslado',
+                                  ((bookingResult!['distance_compensation_cents']
+                                              as num?) ??
+                                          0) /
+                                      100,
+                                ),
+                                _priceLine(
+                                  'Precio base',
+                                  ((bookingResult!['base_price_cents']
+                                              as num?) ??
+                                          0) /
+                                      100,
+                                ),
+                                _priceLine(
+                                  'Subtotal',
+                                  ((bookingResult!['subtotal_cents'] as num?) ??
+                                          0) /
+                                      100,
+                                  strong: true,
+                                ),
+                                if (bookingResult!['distance_zone'] == 'local')
+                                  const Padding(
+                                    padding: EdgeInsets.only(top: 8),
+                                    child: Text(
+                                      'Esta agrupación es local para tu evento. Es probable que no agregue gastos adicionales de traslado.',
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ),
                                 const SizedBox(height: 12),
                                 FilledButton.icon(
                                   onPressed: () async {
