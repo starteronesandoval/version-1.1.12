@@ -10,7 +10,7 @@ Future<void> showSurpriseGroupSheet(
 }) => showModalBottomSheet<void>(
   context: context,
   isScrollControlled: true,
-  backgroundColor: const Color(0xFF1C1235),
+  backgroundColor: const Color(0xFF17110B),
   showDragHandle: true,
   builder:
       (_) => _SurpriseGroupSheet(api: api, onBookingCreated: onBookingCreated),
@@ -190,7 +190,7 @@ class _SurpriseGroupSheetState extends State<_SurpriseGroupSheet> {
         Text(
           '\$${(cents / 100).toStringAsFixed(2)} MXN',
           style: TextStyle(
-            color: strong ? const Color(0xFF68DDCD) : Colors.white,
+            color: strong ? const Color(0xFFFF9D00) : Colors.white,
             fontWeight: strong ? FontWeight.w800 : FontWeight.w500,
           ),
         ),
@@ -213,7 +213,7 @@ class _SurpriseGroupSheetState extends State<_SurpriseGroupSheet> {
           const Icon(
             Icons.card_giftcard_rounded,
             size: 48,
-            color: Color(0xFFFFC857),
+            color: Color(0xFFFFA000),
           ),
           const SizedBox(height: 8),
           const Text(
@@ -350,7 +350,7 @@ class _SurpriseGroupSheetState extends State<_SurpriseGroupSheet> {
         style: TextStyle(
           color:
               durationMinutes! >= 180
-                  ? const Color(0xFF68DDCD)
+                  ? const Color(0xFFFF9D00)
                   : const Color(0xFFFF8A80),
         ),
       ),

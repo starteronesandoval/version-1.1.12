@@ -222,7 +222,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     width: 132,
                     child: Text(
                       label(entry.key),
-                      style: const TextStyle(color: Color(0xFFBFA1FF)),
+                      style: const TextStyle(color: Color(0xFFFF8A00)),
                     ),
                   ),
                   Expanded(child: Text(value(entry.value))),
@@ -366,7 +366,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     if (item['dispute_reason'] != null)
                       Text(
                         'Disputa: ${item['dispute_reason']}',
-                        style: const TextStyle(color: Color(0xFFFFC857)),
+                        style: const TextStyle(color: Color(0xFFFFA000)),
                       ),
                     if (item['review_score'] != null)
                       Text('Calificación: ${item['review_score']} ★'),

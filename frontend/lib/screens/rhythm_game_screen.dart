@@ -249,7 +249,7 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
           ),
           Text(
             'Etapa 1 · Identifica la nota negra',
-            style: TextStyle(fontSize: 12, color: Color(0xFFC8B5EE)),
+            style: TextStyle(fontSize: 12, color: Color(0xFFFFC270)),
           ),
         ],
       ),
@@ -281,7 +281,7 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
                           Text(
                             'Velocidad ×${_speedMultiplier.toStringAsFixed(1)}',
                             style: const TextStyle(
-                              color: Color(0xFFD8C5F5),
+                              color: Color(0xFFFFD7A3),
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
                             ),
@@ -289,7 +289,7 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
                           Text(
                             'Ronda $_round',
                             style: const TextStyle(
-                              color: Color(0xFFCDB7F7),
+                              color: Color(0xFFFFC270),
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
                             ),
@@ -332,7 +332,7 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
           Positioned.fill(
             child: DecoratedBox(
               decoration: BoxDecoration(
-                color: const Color(0xFF120A27).withValues(alpha: .38),
+                color: const Color(0xFF100B07).withValues(alpha: .38),
                 borderRadius: BorderRadius.circular(18),
               ),
             ),
@@ -422,7 +422,7 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
                       color:
                           _pressedPitch == i
                               ? _pitches[i].color
-                              : const Color(0xFF20123D),
+                              : const Color(0xFF201008),
                       border: Border.all(
                         color: _pitches[i].color,
                         width: _pressedPitch == i ? 4 : 2.5,
@@ -448,7 +448,7 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
                             style: TextStyle(
                               color:
                                   _pressedPitch == i
-                                      ? const Color(0xFF170C2C)
+                                      ? const Color(0xFF171008)
                                       : _pitches[i].color,
                               fontSize: 13,
                               fontWeight: FontWeight.w900,
@@ -487,7 +487,7 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
               key: ValueKey(_feedback),
               padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
               decoration: BoxDecoration(
-                color: const Color(0xFF160D2B).withValues(alpha: .9),
+                color: const Color(0xFF100B07).withValues(alpha: .9),
                 borderRadius: BorderRadius.circular(22),
                 border: Border.all(color: _feedbackColor, width: 2),
                 boxShadow: [
@@ -540,7 +540,7 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 15, color: const Color(0xFFD2B7FF)),
+            Icon(icon, size: 15, color: const Color(0xFFFFC270)),
             const SizedBox(width: 4),
             Flexible(
               child: Text(
@@ -572,7 +572,7 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
     child: Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 14, color: const Color(0xFF78E2D2)),
+        Icon(icon, size: 14, color: const Color(0xFFFFA000)),
         const SizedBox(width: 4),
         Text(
           label,
@@ -584,7 +584,7 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
 
   Future<void> _instructions() => showModalBottomSheet<void>(
     context: context,
-    backgroundColor: const Color(0xFF1C1235),
+    backgroundColor: const Color(0xFF17110B),
     showDragHandle: true,
     builder:
         (context) => SafeArea(
@@ -615,7 +615,7 @@ class _RhythmGameScreenState extends State<RhythmGameScreen>
                   'MI · FA · SOL · LA · SI · DO · RE · MI · FA',
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    color: Color(0xFF7DE8D8),
+                    color: Color(0xFFFFA000),
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -670,7 +670,7 @@ class _FallingNote extends StatelessWidget {
           child: const Text(
             '♩',
             style: TextStyle(
-              color: Color(0xFF170C2C),
+              color: Color(0xFF171008),
               fontSize: 38,
               fontWeight: FontWeight.w900,
             ),
@@ -693,7 +693,7 @@ class _VerticalStaffPainter extends CustomPainter {
           ..shader = const LinearGradient(
             begin: Alignment.bottomCenter,
             end: Alignment.topCenter,
-            colors: [Color(0xFF61DDCB), Color(0xFF9A62F5)],
+            colors: [Color(0xFFFFB24A), Color(0xFFFF6D00)],
           ).createShader(Rect.fromLTWH(0, 0, size.width, size.height))
           ..strokeWidth = 2;
     for (var i = 0; i < 5; i++) {
@@ -712,7 +712,7 @@ class _VerticalStaffPainter extends CustomPainter {
     final clef = TextPainter(
       text: const TextSpan(
         text: '𝄞',
-        style: TextStyle(color: Color(0xFFD5BDFF), fontSize: 44, height: 1),
+        style: TextStyle(color: Color(0xFFFFC270), fontSize: 44, height: 1),
       ),
       textDirection: TextDirection.ltr,
     )..layout();

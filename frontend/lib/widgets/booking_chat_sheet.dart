@@ -15,7 +15,7 @@ Future<void> showBookingChat(
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
-    backgroundColor: const Color(0xFF1C1235),
+    backgroundColor: const Color(0xFF17110B),
     showDragHandle: true,
     builder: (_) => BookingChatSheet(
       api: api,
@@ -248,7 +248,7 @@ class _BookingChatSheetState extends State<BookingChatSheet> {
                         backgroundColor: Color(0x3335D8C6),
                         child: Icon(
                           Icons.forum_outlined,
-                          color: Color(0xFF68DDCD),
+                          color: Color(0xFFFF9D00),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -300,7 +300,7 @@ class _BookingChatSheetState extends State<BookingChatSheet> {
                       vertical: 9,
                     ),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF8B5CF6).withValues(alpha: .14),
+                      color: const Color(0xFFFF8A00).withValues(alpha: .14),
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: const Text(
@@ -397,7 +397,7 @@ class _BookingChatSheetState extends State<BookingChatSheet> {
                               decoration: BoxDecoration(
                                 color:
                                     mine
-                                        ? const Color(0xFF7651B7)
+                                        ? const Color(0xFFC75B00)
                                         : Colors.white.withValues(alpha: .10),
                                 borderRadius: BorderRadius.only(
                                   topLeft: const Radius.circular(18),
@@ -413,7 +413,7 @@ class _BookingChatSheetState extends State<BookingChatSheet> {
                                     Text(
                                       item['sender_name'].toString(),
                                       style: const TextStyle(
-                                        color: Color(0xFF68DDCD),
+                                        color: Color(0xFFFF9D00),
                                         fontSize: 12,
                                         fontWeight: FontWeight.w700,
                                       ),

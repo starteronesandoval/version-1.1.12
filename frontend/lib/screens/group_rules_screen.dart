@@ -73,7 +73,7 @@ class _GroupRulesScreenState extends State<GroupRulesScreen> {
               child: Icon(
                 Icons.gavel_rounded,
                 size: 58,
-                color: Color(0xFFFFC857),
+                color: Color(0xFFFFA000),
               ),
             ),
             const SizedBox(height: 14),
@@ -86,7 +86,7 @@ class _GroupRulesScreenState extends State<GroupRulesScreen> {
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: const Color(0xFFFFC857).withValues(alpha: .12),
+                color: const Color(0xFFFFA000).withValues(alpha: .12),
                 borderRadius: BorderRadius.circular(16),
               ),
               child: const Text(

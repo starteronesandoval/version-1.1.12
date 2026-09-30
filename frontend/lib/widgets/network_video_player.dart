@@ -165,7 +165,7 @@ class _NetworkVideoPlayerState extends State<NetworkVideoPlayer> {
                   allowScrubbing: true,
                   padding: const EdgeInsets.symmetric(vertical: 7),
                   colors: const VideoProgressColors(
-                    playedColor: Color(0xFF68DDCD),
+                    playedColor: Color(0xFFFF9D00),
                     bufferedColor: Colors.white38,
                     backgroundColor: Colors.white12,
                   ),
@@ -185,7 +185,7 @@ class _NetworkVideoPlayerState extends State<NetworkVideoPlayer> {
                         child: Slider(
                           value: _volume,
                           onChanged: _setVolume,
-                          activeColor: const Color(0xFF68DDCD),
+                          activeColor: const Color(0xFFFF9D00),
                           inactiveColor: Colors.white24,
                           semanticFormatterCallback: (value) =>
                               'Volumen ${(value * 100).round()} por ciento',

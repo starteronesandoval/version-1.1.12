@@ -230,7 +230,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF1C1235),
+      backgroundColor: const Color(0xFF17110B),
       showDragHandle: true,
       builder:
           (sheetContext) => StatefulBuilder(
@@ -399,7 +399,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF1C1235),
+      backgroundColor: const Color(0xFF17110B),
       showDragHandle: true,
       builder:
           (sheetContext) => StatefulBuilder(
@@ -437,7 +437,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
                               primary:
                                   isBusy
                                       ? const Color(0xFFE65A69)
-                                      : const Color(0xFF55D6C2),
+                                      : const Color(0xFFFF9D00),
                             ),
                           ),
                           child: CalendarDatePicker(
@@ -454,7 +454,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
                           decoration: BoxDecoration(
                             color: (isBusy
                                     ? const Color(0xFFE65A69)
-                                    : const Color(0xFF55D6C2))
+                                    : const Color(0xFFFF9D00))
                                 .withValues(alpha: .15),
                             borderRadius: BorderRadius.circular(18),
                           ),
@@ -467,7 +467,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
                                 color:
                                     isBusy
                                         ? const Color(0xFFFF8A96)
-                                        : const Color(0xFF68DDCD),
+                                        : const Color(0xFFFF9D00),
                               ),
                               const SizedBox(width: 10),
                               Expanded(
@@ -486,7 +486,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
                             minimumSize: const Size.fromHeight(52),
                             backgroundColor:
                                 isBusy
-                                    ? const Color(0xFF3D8E80)
+                                    ? const Color(0xFFC75B00)
                                     : const Color(0xFFB53F51),
                           ),
                           onPressed:
@@ -966,7 +966,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
                   const Icon(
                     Icons.location_on_outlined,
                     size: 17,
-                    color: Color(0xFF68DDCD),
+                    color: Color(0xFFFF9D00),
                   ),
                   const SizedBox(width: 5),
                   Flexible(
@@ -987,10 +987,10 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
                   vertical: 8,
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFFC857).withValues(alpha: .12),
+                  color: const Color(0xFFFFA000).withValues(alpha: .12),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
-                    color: const Color(0xFFFFC857).withValues(alpha: .28),
+                    color: const Color(0xFFFFA000).withValues(alpha: .28),
                   ),
                 ),
                 child: Row(
@@ -998,7 +998,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
                   children: [
                     const Icon(
                       Icons.star_rounded,
-                      color: Color(0xFFFFC857),
+                      color: Color(0xFFFFA000),
                       size: 22,
                     ),
                     const SizedBox(width: 6),
@@ -1052,7 +1052,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
                   children: [
                     Icon(
                       Icons.account_balance_wallet_outlined,
-                      color: Color(0xFF68DDCD),
+                      color: Color(0xFFFF9D00),
                     ),
                     SizedBox(width: 10),
                     Expanded(
@@ -1081,8 +1081,8 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
                   style: TextStyle(
                     color:
                         payoutDestination?['stripe_connect_ready'] == true
-                            ? const Color(0xFF68DDCD)
-                            : const Color(0xFFFFC857),
+                            ? const Color(0xFFFF9D00)
+                            : const Color(0xFFFFA000),
                   ),
                 ),
                 if (payoutDestination?['last_payout_status'] == 'paid') ...[
@@ -1170,7 +1170,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
                       backgroundColor: Color(0x3335D8C6),
                       child: Icon(
                         Icons.notifications_active,
-                        color: Color(0xFF68DDCD),
+                        color: Color(0xFFFF9D00),
                       ),
                     ),
                     SizedBox(width: 12),
@@ -1206,7 +1206,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
                       backgroundColor: Color(0x33BFA1FF),
                       child: Icon(
                         Icons.receipt_long_outlined,
-                        color: Color(0xFFBFA1FF),
+                        color: Color(0xFFFF8A00),
                       ),
                     ),
                     SizedBox(width: 12),
@@ -1242,7 +1242,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
             children: [
               Row(
                 children: [
-                  const Icon(Icons.calendar_month, color: Color(0xFFBFA1FF)),
+                  const Icon(Icons.calendar_month, color: Color(0xFFFF8A00)),
                   const SizedBox(width: 10),
                   const Expanded(
                     child: Text(
@@ -1373,7 +1373,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
           Text(
             _formatDate(item['event_date'].toString()),
             style: const TextStyle(
-              color: Color(0xFF68DDCD),
+              color: Color(0xFFFF9D00),
               fontWeight: FontWeight.w800,
               fontSize: 17,
             ),
@@ -1425,7 +1425,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xFFFFC857).withValues(alpha: .10),
+                color: const Color(0xFFFFA000).withValues(alpha: .10),
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Column(
@@ -1436,7 +1436,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
                       Icon(
                         Icons.lightbulb_outline,
                         size: 18,
-                        color: Color(0xFFFFC857),
+                        color: Color(0xFFFFA000),
                       ),
                       SizedBox(width: 6),
                       Text(
@@ -1519,7 +1519,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: 38, color: const Color(0xFFBFA1FF)),
+          Icon(icon, size: 38, color: const Color(0xFFFF8A00)),
           const SizedBox(height: 8),
           Text(text),
         ],
@@ -1553,7 +1553,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
               const SizedBox(height: 6),
               const Text(
                 'El celular es privado: sólo se guardará para soporte administrativo.',
-                style: TextStyle(color: Color(0xFFFFC857), fontSize: 12),
+                style: TextStyle(color: Color(0xFFFFA000), fontSize: 12),
               ),
               const SizedBox(height: 20),
               for (final entry in fields.entries) ...[
@@ -1676,7 +1676,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen>
                                 cardTheme == theme.key
                                     ? Icons.check_circle_rounded
                                     : Icons.circle_outlined,
-                                color: const Color(0xFF68DDCD),
+                                color: const Color(0xFFFF9D00),
                               ),
                               const SizedBox(width: 10),
                               Expanded(

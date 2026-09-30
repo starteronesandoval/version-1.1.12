@@ -12,7 +12,7 @@ class GlassBackground extends StatelessWidget {
       gradient: LinearGradient(
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
-        colors: [Color(0xFF130B2B), Color(0xFF2E1760), Color(0xFF0B2447)],
+        colors: [Color(0xFF080D10), Color(0xFF1B1007), Color(0xFF080D10)],
       ),
     ),
     child: Stack(
@@ -20,12 +20,12 @@ class GlassBackground extends StatelessWidget {
         const Positioned(
           top: -90,
           right: -80,
-          child: _Glow(color: Color(0xFF9F67FF), size: 280),
+          child: _Glow(color: Color(0xFFFF7A00), size: 280),
         ),
         const Positioned(
           bottom: 40,
           left: -120,
-          child: _Glow(color: Color(0xFF20C9B5), size: 300),
+          child: _Glow(color: Color(0xFFFFA000), size: 300),
         ),
         child,
       ],
@@ -78,7 +78,7 @@ class GlassCard extends StatelessWidget {
           Positioned.fill(child: Image.asset(asset, fit: BoxFit.cover)),
         Positioned.fill(
           child: ColoredBox(
-            color: (light ? Colors.white : const Color(0xFF071018)).withValues(
+            color: (light ? const Color(0xFFFFF7ED) : const Color(0xFF100B07)).withValues(
               alpha: light ? .86 : (theme == 'classic' ? .42 : .20),
             ),
           ),
@@ -89,13 +89,13 @@ class GlassCard extends StatelessWidget {
             sigmaY: theme == 'classic' ? 16 : 3,
           ),
           child: Material(
-            color: Colors.white.withValues(
+              color: const Color(0xFFFFEDD5).withValues(
               alpha: light ? .68 : (theme == 'classic' ? .07 : .03),
             ),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(26),
               side: BorderSide(
-                color: Colors.white.withValues(alpha: light ? 1 : .78),
+                color: const Color(0xFFFFC270).withValues(alpha: light ? .9 : .58),
                 width: 1.4,
               ),
             ),
@@ -190,7 +190,7 @@ class ProfileAvatar extends StatelessWidget {
         decoration: const BoxDecoration(
           shape: BoxShape.circle,
           gradient: LinearGradient(
-            colors: [Color(0xFFC29BFF), Color(0xFF53E0D0)],
+            colors: [Color(0xFFFFB24A), Color(0xFFFF6D00)],
           ),
         ),
         child: CircleAvatar(
@@ -213,7 +213,7 @@ class ProfileAvatar extends StatelessWidget {
 
 Color avatarColor(String hex) {
   final clean = hex.replaceFirst('#', '');
-  return Color(int.tryParse('FF$clean', radix: 16) ?? 0xFF8B5CF6);
+  return Color(int.tryParse('FF$clean', radix: 16) ?? 0xFFFF8A00);
 }
 
 IconData avatarIcon(String preset) =>
@@ -273,7 +273,7 @@ Future<AvatarSelection?> showAvatarPicker(
   var color = currentColor;
   return showModalBottomSheet<AvatarSelection>(
     context: context,
-    backgroundColor: const Color(0xFF1C1235),
+    backgroundColor: const Color(0xFF17110B),
     showDragHandle: true,
     isScrollControlled: true,
     builder:

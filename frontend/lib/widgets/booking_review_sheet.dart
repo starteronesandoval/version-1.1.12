@@ -113,7 +113,7 @@ class _BookingReviewSheetState extends State<BookingReviewSheet> {
                 Text(
                   scores[entry.key]!.toStringAsFixed(1),
                   style: const TextStyle(
-                    color: Color(0xFFFFC857),
+                    color: Color(0xFFFFA000),
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -132,7 +132,7 @@ class _BookingReviewSheetState extends State<BookingReviewSheet> {
                 padding: EdgeInsets.only(bottom: 10),
                 child: Text(
                   'Esta respuesta representa el 30% de la calificación final.',
-                  style: TextStyle(color: Color(0xFFFFC857), fontSize: 12),
+                  style: TextStyle(color: Color(0xFFFFA000), fontSize: 12),
                 ),
               ),
           ],

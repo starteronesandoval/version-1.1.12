@@ -122,7 +122,7 @@ class _BalamAppState extends State<BalamApp> {
                 const Icon(
                   Icons.cloud_off_rounded,
                   size: 64,
-                  color: Color(0xFFFFC857),
+                  color: Color(0xFFFFA000),
                 ),
                 const SizedBox(height: 18),
                 const Text(
@@ -162,21 +162,38 @@ class _BalamAppState extends State<BalamApp> {
     theme: ThemeData(
       brightness: Brightness.dark,
       colorScheme: ColorScheme.fromSeed(
-        seedColor: garibaldiGold,
+        seedColor: const Color(0xFFFF8A00),
         brightness: Brightness.dark,
       ),
       useMaterial3: true,
       scaffoldBackgroundColor: garibaldiInk,
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Color(0xFF080D10),
+        foregroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+      ),
+      cardTheme: CardThemeData(
+        color: const Color(0xFF17110B),
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: const Color(0xFFFF8A00),
+          foregroundColor: const Color(0xFF120B05),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        ),
+      ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: Colors.white.withValues(alpha: .08),
+        fillColor: const Color(0xFF17110B),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(18),
           borderSide: BorderSide.none,
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(18),
-          borderSide: BorderSide(color: Colors.white.withValues(alpha: .14)),
+          borderSide: const BorderSide(color: Color(0x66FF8A00)),
         ),
       ),
     ),

@@ -366,7 +366,7 @@ class _AuthScreenState extends State<AuthScreen> {
           child: SingleChildScrollView(
             padding: EdgeInsets.fromLTRB(
               22,
-              MediaQuery.sizeOf(context).height * .25,
+              MediaQuery.sizeOf(context).height * .23,
               22,
               22,
             ),
@@ -538,23 +538,82 @@ class _LoginBackground extends StatelessWidget {
   Widget build(BuildContext context) => Stack(
     fit: StackFit.expand,
     children: [
-      Image.asset(
-        'assets/branding/garibaldi_login_background.png',
-        fit: BoxFit.cover,
-        alignment: Alignment.topCenter,
-        excludeFromSemantics: true,
-      ),
       const DecoratedBox(
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Color(0x08040918), Color(0x33040918), Color(0x80040918)],
-            stops: [0, .45, 1],
+            colors: [Color(0xFF080D10), Color(0xFF160C04), Color(0xFF080D10)],
+            stops: [0, .52, 1],
+          ),
+        ),
+      ),
+      const Positioned(
+        top: -150,
+        right: -110,
+        child: _LoginGlow(color: Color(0xFFFF6D00), size: 310),
+      ),
+      const Positioned(
+        top: 180,
+        left: -150,
+        child: _LoginGlow(color: Color(0xFFFFA000), size: 280),
+      ),
+      const SafeArea(
+        child: IgnorePointer(
+          child: Padding(
+            padding: EdgeInsets.only(top: 34),
+            child: Column(
+              children: [
+                Icon(Icons.pets_rounded, color: Color(0xFFFFA000), size: 44),
+                SizedBox(height: 8),
+                Text(
+                  'GARIBALDI',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 5,
+                  ),
+                ),
+                SizedBox(height: 6),
+                Text(
+                  'MÚSICA EN VIVO',
+                  style: TextStyle(
+                    color: Color(0xFFFFC270),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 3,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
       child,
     ],
+  );
+}
+
+class _LoginGlow extends StatelessWidget {
+  const _LoginGlow({required this.color, required this.size});
+
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: size,
+    height: size,
+    decoration: BoxDecoration(
+      shape: BoxShape.circle,
+      boxShadow: [
+        BoxShadow(
+          color: color.withValues(alpha: .22),
+          blurRadius: 110,
+          spreadRadius: 44,
+        ),
+      ],
+    ),
   );
 }

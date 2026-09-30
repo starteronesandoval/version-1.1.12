@@ -13,7 +13,6 @@ import '../widgets/booking_review_sheet.dart';
 import '../widgets/glass_ui.dart';
 import '../widgets/network_video_player.dart';
 import '../widgets/social_widgets.dart';
-import '../widgets/surprise_group_sheet.dart';
 import '../widgets/platinum_certificate.dart';
 import '../widgets/notification_inbox.dart';
 import 'rhythm_game_screen.dart';
@@ -35,7 +34,30 @@ class _ClientHomeState extends State<ClientHome> {
   bool loading = true;
   bool profileLoading = true;
   bool openingCheckout = false;
+  String selectedGenre = 'Todas';
   Timer? debounce;
+
+  List<dynamic> get _visibleResults {
+    if (selectedGenre == 'Todas') return results;
+    final target = _normalizeGenre(selectedGenre);
+    return results.where((item) {
+      final band = item as Map<String, dynamic>;
+      final values = [
+        band['musical_style'],
+        band['group_type'],
+      ].whereType<Object>().map((value) => _normalizeGenre(value.toString()));
+      return values.any((value) => value.contains(target));
+    }).toList();
+  }
+
+  String _normalizeGenre(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp('[áàä]'), 'a')
+      .replaceAll(RegExp('[éèë]'), 'e')
+      .replaceAll(RegExp('[íìï]'), 'i')
+      .replaceAll(RegExp('[óòö]'), 'o')
+      .replaceAll(RegExp('[úùü]'), 'u')
+      .replaceAll('ñ', 'n');
 
   @override
   void initState() {
@@ -138,28 +160,48 @@ class _ClientHomeState extends State<ClientHome> {
     appBar: AppBar(
       backgroundColor: Colors.transparent,
       foregroundColor: Colors.white,
-      title: const Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      title: const Row(
         children: [
-          Text(
-            'Descubre',
-            style: TextStyle(fontWeight: FontWeight.w800, color: Colors.white),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFFFFC02E), Color(0xFFFF6D00)],
+              ),
+              borderRadius: BorderRadius.all(Radius.circular(13)),
+            ),
+            child: SizedBox(
+              width: 42,
+              height: 42,
+              child: Icon(Icons.music_note_rounded, color: Colors.black),
+            ),
           ),
-          Text(
-            'música para tu momento',
-            style: TextStyle(fontSize: 12, color: Color(0xFFB8C1C8)),
+          SizedBox(width: 10),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Garibaldi',
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 22,
+                  color: Colors.white,
+                ),
+              ),
+              Text(
+                'MÚSICA QUE UNE',
+                style: TextStyle(
+                  fontSize: 8,
+                  letterSpacing: 2.1,
+                  color: Color(0xFFFFC270),
+                ),
+              ),
+            ],
           ),
         ],
       ),
       actions:
           clientProfile?['profile_complete'] == true
               ? [
-                NotificationInboxButton(api: widget.api),
-                IconButton(
-                  tooltip: 'Entrar a una fiesta con QR',
-                  onPressed: () => scanEventChatQr(context, widget.api),
-                  icon: const Icon(Icons.qr_code_scanner_rounded),
-                ),
                 IconButton(
                   tooltip: 'Salto musical',
                   onPressed:
@@ -202,7 +244,6 @@ class _ClientHomeState extends State<ClientHome> {
                 ),
               ]
               : [
-                NotificationInboxButton(api: widget.api),
                 IconButton(
                   onPressed: widget.onLogout,
                   icon: const Icon(Icons.logout),
@@ -222,10 +263,9 @@ class _ClientHomeState extends State<ClientHome> {
                     Padding(
                       padding: const EdgeInsets.fromLTRB(18, 14, 18, 12),
                       child: GlassCard(
-                        light: true,
                         padding: EdgeInsets.zero,
                         child: TextField(
-                          style: const TextStyle(color: Color(0xFF17202A)),
+                          style: const TextStyle(color: Colors.white),
                           controller: search,
                           onChanged: (_) {
                             debounce?.cancel();
@@ -237,33 +277,28 @@ class _ClientHomeState extends State<ClientHome> {
                           decoration: const InputDecoration(
                             prefixIcon: Icon(
                               Icons.search,
-                              color: Color(0xFF17202A),
+                              color: Color(0xFFFFA000),
                             ),
-                            hintText: 'Busca nombre, estilo o tipo de grupo',
-                            hintStyle: TextStyle(color: Color(0xFF66747D)),
+                            hintText: 'Buscar agrupaciones...',
+                            hintStyle: TextStyle(color: Color(0xFFB8B0A8)),
                             border: InputBorder.none,
                           ),
                         ),
                       ),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
-                      child: FilledButton.icon(
-                        style: FilledButton.styleFrom(
-                          minimumSize: const Size.fromHeight(56),
-                          backgroundColor: const Color(0xFF7B4DFF),
-                        ),
-                        onPressed:
-                            () => showSurpriseGroupSheet(
-                              context,
-                              api: widget.api,
-                              onBookingCreated: loadClientBookings,
-                            ),
-                        icon: const Icon(Icons.card_giftcard_rounded),
-                        label: const Text(
-                          'Contratar Grupo Sorpresa',
-                          style: TextStyle(fontWeight: FontWeight.w800),
-                        ),
+                    SizedBox(
+                      height: 98,
+                      child: ListView(
+                        padding: const EdgeInsets.symmetric(horizontal: 18),
+                        scrollDirection: Axis.horizontal,
+                        children: [
+                          _genreChip(Icons.grid_view_rounded, 'Todas'),
+                          _genreChip(Icons.pets_outlined, 'Norteño'),
+                          _genreChip(Icons.music_note_rounded, 'Banda'),
+                          _genreChip(Icons.queue_music_rounded, 'Mariachi'),
+                          _genreChip(Icons.piano_rounded, 'Sierreño'),
+                          _genreChip(Icons.more_horiz_rounded, 'Versátil'),
+                        ],
                       ),
                     ),
                     Padding(
@@ -272,7 +307,7 @@ class _ClientHomeState extends State<ClientHome> {
                         children: [
                           const Expanded(
                             child: Text(
-                              'Agrupaciones disponibles',
+                              'Agrupaciones destacadas',
                               style: TextStyle(
                                 fontSize: 19,
                                 fontWeight: FontWeight.w700,
@@ -280,11 +315,11 @@ class _ClientHomeState extends State<ClientHome> {
                               ),
                             ),
                           ),
-                          Text(
-                            '${results.length}',
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontWeight: FontWeight.w700,
+                          const Text(
+                            'Ver todas ›',
+                            style: TextStyle(
+                              color: Color(0xFFFFA000),
+                              fontWeight: FontWeight.w800,
                             ),
                           ),
                         ],
@@ -294,7 +329,7 @@ class _ClientHomeState extends State<ClientHome> {
                     if (loading) const LinearProgressIndicator(minHeight: 2),
                     Expanded(
                       child:
-                          results.isEmpty && !loading
+                          _visibleResults.isEmpty && !loading
                               ? const Center(
                                 child: Text(
                                   'Aún no encontramos agrupaciones',
@@ -308,12 +343,13 @@ class _ClientHomeState extends State<ClientHome> {
                                   18,
                                   100,
                                 ),
-                                itemCount: results.length,
+                                itemCount: _visibleResults.length,
                                 separatorBuilder:
                                     (_, __) => const SizedBox(height: 14),
                                 itemBuilder:
                                     (_, index) => _bandCard(
-                                      results[index] as Map<String, dynamic>,
+                                      _visibleResults[index]
+                                          as Map<String, dynamic>,
                                     ),
                               ),
                     ),
@@ -329,7 +365,113 @@ class _ClientHomeState extends State<ClientHome> {
               label: const Text('Mi perfil'),
             )
             : null,
+    bottomNavigationBar:
+        clientProfile?['profile_complete'] == true
+            ? NavigationBar(
+              height: 72,
+              backgroundColor: const Color(0xFF090C0E),
+              indicatorColor: const Color(0x33FF8A00),
+              selectedIndex: 0,
+              onDestinationSelected: (index) {
+                if (index == 1) {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => NotificationInboxScreen(api: widget.api),
+                    ),
+                  );
+                }
+                if (index == 2) _contractsSheet(context);
+                if (index == 3) scanEventChatQr(context, widget.api);
+                if (index == 4) _profileSheet(context);
+              },
+              destinations: const [
+                NavigationDestination(
+                  icon: Icon(Icons.home_outlined),
+                  selectedIcon: Icon(Icons.home_rounded),
+                  label: 'Inicio',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.notifications_outlined),
+                  label: 'Avisos',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.calendar_month_outlined),
+                  label: 'Eventos',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.qr_code_scanner_rounded),
+                  label: 'QR',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.person_outline),
+                  label: 'Perfil',
+                ),
+              ],
+            )
+            : null,
   );
+
+  Widget _genreChip(IconData icon, String label, {VoidCallback? onTap}) {
+    final selected = selectedGenre == label;
+    return Padding(
+      padding: const EdgeInsets.only(right: 12),
+      child: SizedBox(
+        width: 82,
+        child: InkWell(
+          onTap: onTap ?? () => setState(() => selectedGenre = label),
+          borderRadius: BorderRadius.circular(18),
+          child: Column(
+            children: [
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color:
+                      selected
+                          ? const Color(0xFF2A1908)
+                          : const Color(0xFF12191E),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color:
+                        selected
+                            ? const Color(0xFFFFA000)
+                            : const Color(0xFF354049),
+                  ),
+                  boxShadow:
+                      selected
+                          ? [
+                            BoxShadow(
+                              color: const Color(
+                                0xFFFF8A00,
+                              ).withValues(alpha: .22),
+                              blurRadius: 14,
+                            ),
+                          ]
+                          : null,
+                ),
+                child: SizedBox(
+                  width: 64,
+                  height: 56,
+                  child: Icon(
+                    icon,
+                    color: selected ? const Color(0xFFFFA000) : Colors.white,
+                    size: 28,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: selected ? const Color(0xFFFFA000) : Colors.white,
+                  fontWeight: selected ? FontWeight.w800 : FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _completeProfileRequired() => Center(
     child: SingleChildScrollView(
@@ -341,7 +483,7 @@ class _ClientHomeState extends State<ClientHome> {
             const Icon(
               Icons.assignment_ind_outlined,
               size: 62,
-              color: Color(0xFFBFA1FF),
+              color: Color(0xFFFF8A00),
             ),
             const SizedBox(height: 16),
             const Text(
@@ -396,124 +538,117 @@ class _ClientHomeState extends State<ClientHome> {
         media
             .where((item) => item['media_type'] == 'profile_photo')
             .firstOrNull;
-    return GlassCard(
-      light: true,
-      theme: resolveGroupTheme(
-        selected: band['card_theme']?.toString(),
-        groupType: band['group_type']?.toString(),
-        musicalStyle: band['musical_style']?.toString(),
-      ),
+    final imageUrl = widget.api.mediaUrl(avatar?['url']);
+    return InkWell(
       onTap: () => _showBand(context, band),
-      child: DefaultTextStyle.merge(
-        style: const TextStyle(color: Color(0xFF17202A)),
-        child: Row(
-          children: [
-            ProfileAvatar(
-              url:
-                  band['avatar_mode'] == 'preset'
-                      ? null
-                      : widget.api.mediaUrl(avatar?['url']),
-              fallback: band['group_name'],
-              preset: band['avatar_preset'] ?? 'musician_singer_black',
-              color: band['avatar_color'] ?? '#8B5CF6',
-              radius: 38,
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          band['group_name'],
-                          style: const TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                      PlatinumBadge(api: widget.api, group: band),
+      borderRadius: BorderRadius.circular(24),
+      child: Ink(
+        height: 248,
+        decoration: BoxDecoration(
+          color: const Color(0xFF12191E),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: const Color(0xFF33404A)),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(23),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (imageUrl != null)
+                Image.network(
+                  imageUrl,
+                  fit: BoxFit.cover,
+                  errorBuilder:
+                      (_, __, ___) =>
+                          const ColoredBox(color: Color(0xFF17110B)),
+                )
+              else
+                ColoredBox(color: const Color(0xFF17110B)),
+              const DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Color(0x00101418),
+                      Color(0x22101418),
+                      Color(0xEE080D10),
                     ],
+                    stops: [0, .35, 1],
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Corriente musical: ${band['musical_style']}',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Color(0xFF45545E)),
-                  ),
-                  const SizedBox(height: 5),
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.location_on_outlined,
-                        size: 16,
-                        color: Color(0xFF68DDCD),
-                      ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          _bandLocation(band),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: const Color(0xFF56656E),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 7),
-                  Row(
-                    children: [
-                      Icon(
-                        band['rating'] == null
-                            ? Icons.star_border_rounded
-                            : Icons.star_rounded,
-                        size: 18,
-                        color: const Color(0xFFFFC857),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        band['rating'] == null
-                            ? 'Sin calificaciones'
-                            : '${band['rating']} (${band['review_count']})',
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.payments_outlined,
-                        size: 17,
-                        color: Color(0xFFBFA1FF),
-                      ),
-                      Text(
-                        '  \$${band['hourly_rate']} / hora',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                      Text(
-                        ' · mínimo ${band['minimum_booking_hours'] ?? 2} h',
-                        style: TextStyle(color: const Color(0xFF56656E)),
-                      ),
-                      const Spacer(),
-                      if (band['includes_sound'])
-                        const Icon(
-                          Icons.speaker_group_outlined,
-                          size: 19,
-                          color: Color(0xFF68DDCD),
-                        ),
-                    ],
-                  ),
-                ],
+                ),
               ),
-            ),
-          ],
+              Positioned(
+                top: 12,
+                right: 12,
+                child: IconButton(
+                  onPressed: () {},
+                  icon: const Icon(
+                    Icons.favorite_border_rounded,
+                    color: Colors.white,
+                    size: 30,
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 18,
+                right: 18,
+                bottom: 16,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            band['group_name'],
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 25,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        PlatinumBadge(api: widget.api, group: band),
+                      ],
+                    ),
+                    Text(
+                      '${band['musical_style']} · ${_bandLocation(band)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFFD2D7DC),
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.star_rounded,
+                          color: Color(0xFFFFB000),
+                          size: 24,
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          band['rating'] == null
+                              ? 'Nuevo'
+                              : '${band['rating']} (${band['review_count']})',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -539,7 +674,7 @@ class _ClientHomeState extends State<ClientHome> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF1C1235),
+      backgroundColor: const Color(0xFF17110B),
       showDragHandle: true,
       builder:
           (sheetContext) => DraggableScrollableSheet(
@@ -558,7 +693,8 @@ class _ClientHomeState extends State<ClientHome> {
                                 ? null
                                 : widget.api.mediaUrl(avatar?['url']),
                         fallback: band['group_name'],
-                        preset: band['avatar_preset'] ?? 'musician_singer_black',
+                        preset:
+                            band['avatar_preset'] ?? 'musician_singer_black',
                         color: band['avatar_color'] ?? '#8B5CF6',
                         radius: 56,
                       ),
@@ -574,13 +710,13 @@ class _ClientHomeState extends State<ClientHome> {
                     Text(
                       'Corriente musical: ${band['musical_style']}',
                       textAlign: TextAlign.center,
-                      style: const TextStyle(color: Color(0xFFBFA1FF)),
+                      style: const TextStyle(color: Color(0xFFFF8A00)),
                     ),
                     const SizedBox(height: 6),
                     Text(
                       _bandLocation(band),
                       textAlign: TextAlign.center,
-                      style: const TextStyle(color: Color(0xFF68DDCD)),
+                      style: const TextStyle(color: Color(0xFFFF9D00)),
                     ),
                     const SizedBox(height: 10),
                     Center(
@@ -589,7 +725,7 @@ class _ClientHomeState extends State<ClientHome> {
                           band['rating'] == null
                               ? Icons.star_border_rounded
                               : Icons.star_rounded,
-                          color: const Color(0xFFFFC857),
+                          color: const Color(0xFFFFA000),
                         ),
                         label: Text(
                           band['rating'] == null
@@ -740,7 +876,7 @@ class _ClientHomeState extends State<ClientHome> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF1C1235),
+      backgroundColor: const Color(0xFF17110B),
       showDragHandle: true,
       builder:
           (sheetContext) => StatefulBuilder(
@@ -785,7 +921,7 @@ class _ClientHomeState extends State<ClientHome> {
                         const Icon(
                           Icons.calendar_month,
                           size: 46,
-                          color: Color(0xFFBFA1FF),
+                          color: Color(0xFFFF8A00),
                         ),
                         const SizedBox(height: 12),
                         Text(
@@ -806,7 +942,7 @@ class _ClientHomeState extends State<ClientHome> {
                         Text(
                           'Contrato mínimo: ${band['minimum_booking_hours'] ?? 2} horas.',
                           textAlign: TextAlign.center,
-                          style: const TextStyle(color: Color(0xFFFFC857)),
+                          style: const TextStyle(color: Color(0xFFFFA000)),
                         ),
                         const SizedBox(height: 20),
                         OutlinedButton.icon(
@@ -889,7 +1025,7 @@ class _ClientHomeState extends State<ClientHome> {
                               border: Border.all(
                                 color:
                                     available
-                                        ? const Color(0xFF68DDCD)
+                                        ? const Color(0xFFFF9D00)
                                         : const Color(0xFFFF7D8C),
                               ),
                             ),
@@ -902,7 +1038,7 @@ class _ClientHomeState extends State<ClientHome> {
                                   size: 42,
                                   color:
                                       available
-                                          ? const Color(0xFF68DDCD)
+                                          ? const Color(0xFFFF9D00)
                                           : const Color(0xFFFF7D8C),
                                 ),
                                 const SizedBox(height: 8),
@@ -926,7 +1062,7 @@ class _ClientHomeState extends State<ClientHome> {
                                     padding: const EdgeInsets.all(12),
                                     decoration: BoxDecoration(
                                       color: const Color(
-                                        0xFFFFC857,
+                                        0xFFFFA000,
                                       ).withValues(alpha: .14),
                                       borderRadius: BorderRadius.circular(12),
                                     ),
@@ -936,7 +1072,7 @@ class _ClientHomeState extends State<ClientHome> {
                                           priceType == 'low_season'
                                               ? Icons.local_offer_outlined
                                               : Icons.location_city_outlined,
-                                          color: const Color(0xFFFFC857),
+                                          color: const Color(0xFFFFA000),
                                         ),
                                         const SizedBox(width: 10),
                                         Expanded(
@@ -1211,7 +1347,7 @@ class _ClientHomeState extends State<ClientHome> {
                               ).withValues(alpha: .18),
                               borderRadius: BorderRadius.circular(20),
                               border: Border.all(
-                                color: const Color(0xFF68DDCD),
+                                color: const Color(0xFFFF9D00),
                               ),
                             ),
                             child: Column(
@@ -1219,7 +1355,7 @@ class _ClientHomeState extends State<ClientHome> {
                                 const Icon(
                                   Icons.celebration,
                                   size: 42,
-                                  color: Color(0xFF68DDCD),
+                                  color: Color(0xFFFF9D00),
                                 ),
                                 const SizedBox(height: 8),
                                 const Text(
@@ -1312,7 +1448,7 @@ class _ClientHomeState extends State<ClientHome> {
     final style = TextStyle(
       fontSize: strong ? 17 : 14,
       fontWeight: strong ? FontWeight.w800 : FontWeight.w500,
-      color: strong ? const Color(0xFF68DDCD) : Colors.white,
+      color: strong ? const Color(0xFFFF9D00) : Colors.white,
     );
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1361,7 +1497,7 @@ class _ClientHomeState extends State<ClientHome> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF1C1235),
+      backgroundColor: const Color(0xFF17110B),
       showDragHandle: true,
       builder:
           (sheetContext) => SafeArea(
@@ -1422,7 +1558,7 @@ class _ClientHomeState extends State<ClientHome> {
                                   '${_formatDate(DateTime.parse(item['event_date']))} · '
                                   '${_bookingTime(item['start_time'])}–${_bookingTime(item['end_time'])}',
                                   style: const TextStyle(
-                                    color: Color(0xFF68DDCD),
+                                    color: Color(0xFFFF9D00),
                                   ),
                                 ),
                                 const SizedBox(height: 4),
@@ -1438,8 +1574,8 @@ class _ClientHomeState extends State<ClientHome> {
                                   style: TextStyle(
                                     color:
                                         item['payment_status'] == 'paid'
-                                            ? const Color(0xFF68DDCD)
-                                            : const Color(0xFFFFC857),
+                                            ? const Color(0xFFFF9D00)
+                                            : const Color(0xFFFFA000),
                                     fontWeight: FontWeight.w700,
                                   ),
                                 ),
@@ -1448,23 +1584,28 @@ class _ClientHomeState extends State<ClientHome> {
                                         'validating_payment') ...[
                                   const SizedBox(height: 8),
                                   FilledButton.icon(
-                                  onPressed: openingCheckout ? null : () async {
-                                      try {
-                                        await _openBookingCheckout(
-                                          item['id'] as int,
-                                        );
-                                      } on ApiException catch (error) {
-                                        if (sheetContext.mounted) {
-                                          ScaffoldMessenger.of(
-                                            sheetContext,
-                                          ).showSnackBar(
-                                            SnackBar(
-                                              content: Text(error.message),
-                                            ),
-                                          );
-                                        }
-                                      }
-                                    },
+                                    onPressed:
+                                        openingCheckout
+                                            ? null
+                                            : () async {
+                                              try {
+                                                await _openBookingCheckout(
+                                                  item['id'] as int,
+                                                );
+                                              } on ApiException catch (error) {
+                                                if (sheetContext.mounted) {
+                                                  ScaffoldMessenger.of(
+                                                    sheetContext,
+                                                  ).showSnackBar(
+                                                    SnackBar(
+                                                      content: Text(
+                                                        error.message,
+                                                      ),
+                                                    ),
+                                                  );
+                                                }
+                                              }
+                                            },
                                     icon: const Icon(Icons.payment),
                                     label: Text(
                                       openingCheckout
@@ -1511,31 +1652,35 @@ class _ClientHomeState extends State<ClientHome> {
                                 const SizedBox(height: 8),
                                 if (item['can_review'] == true)
                                   FilledButton.icon(
-                                    onPressed: openingCheckout ? null : () async {
-                                      final result = await showModalBottomSheet<
-                                        Map<String, dynamic>
-                                      >(
-                                        context: sheetContext,
-                                        isScrollControlled: true,
-                                        backgroundColor: const Color(
-                                          0xFF1C1235,
-                                        ),
-                                        showDragHandle: true,
-                                        builder:
-                                            (_) => BookingReviewSheet(
-                                              api: widget.api,
-                                              booking: item,
-                                            ),
-                                      );
-                                      if (result != null) {
-                                        item['can_review'] = false;
-                                        item['review_score'] =
-                                            result['overall_score'];
-                                        item['review_status'] =
-                                            'Ya calificaste este evento.';
-                                        if (mounted) setState(() {});
-                                      }
-                                    },
+                                    onPressed:
+                                        openingCheckout
+                                            ? null
+                                            : () async {
+                                              final result =
+                                                  await showModalBottomSheet<
+                                                    Map<String, dynamic>
+                                                  >(
+                                                    context: sheetContext,
+                                                    isScrollControlled: true,
+                                                    backgroundColor:
+                                                        const Color(0xFF17110B),
+                                                    showDragHandle: true,
+                                                    builder:
+                                                        (_) =>
+                                                            BookingReviewSheet(
+                                                              api: widget.api,
+                                                              booking: item,
+                                                            ),
+                                                  );
+                                              if (result != null) {
+                                                item['can_review'] = false;
+                                                item['review_score'] =
+                                                    result['overall_score'];
+                                                item['review_status'] =
+                                                    'Ya calificaste este evento.';
+                                                if (mounted) setState(() {});
+                                              }
+                                            },
                                     icon: const Icon(Icons.star_rounded),
                                     label: const Text('Calificar agrupación'),
                                   )
@@ -1547,7 +1692,7 @@ class _ClientHomeState extends State<ClientHome> {
                                             ? Icons.verified_rounded
                                             : Icons.schedule_rounded,
                                         size: 18,
-                                        color: const Color(0xFFFFC857),
+                                        color: const Color(0xFFFFA000),
                                       ),
                                       const SizedBox(width: 7),
                                       Expanded(
@@ -1595,7 +1740,7 @@ class _ClientHomeState extends State<ClientHome> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF1C1235),
+      backgroundColor: const Color(0xFF17110B),
       showDragHandle: true,
       builder:
           (sheetContext) => SafeArea(
@@ -1651,7 +1796,7 @@ class _ClientHomeState extends State<ClientHome> {
                                   children: [
                                     const Icon(
                                       Icons.event_available_rounded,
-                                      color: Color(0xFF68DDCD),
+                                      color: Color(0xFFFF9D00),
                                     ),
                                     const SizedBox(width: 9),
                                     Expanded(
@@ -1698,7 +1843,7 @@ class _ClientHomeState extends State<ClientHome> {
                                         context: sheetContext,
                                         isScrollControlled: true,
                                         backgroundColor: const Color(
-                                          0xFF1C1235,
+                                          0xFF17110B,
                                         ),
                                         showDragHandle: true,
                                         builder:
@@ -1729,7 +1874,7 @@ class _ClientHomeState extends State<ClientHome> {
                                     padding: const EdgeInsets.all(12),
                                     decoration: BoxDecoration(
                                       color: const Color(
-                                        0xFFFFC857,
+                                        0xFFFFA000,
                                       ).withValues(alpha: .12),
                                       borderRadius: BorderRadius.circular(14),
                                     ),
@@ -1739,7 +1884,7 @@ class _ClientHomeState extends State<ClientHome> {
                                           : item['review_status'].toString(),
                                       textAlign: TextAlign.center,
                                       style: const TextStyle(
-                                        color: Color(0xFFFFC857),
+                                        color: Color(0xFFFFA000),
                                         fontWeight: FontWeight.w700,
                                       ),
                                     ),
@@ -1835,7 +1980,7 @@ class _ClientHomeState extends State<ClientHome> {
     final savedProfile = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF1C1235),
+      backgroundColor: const Color(0xFF17110B),
       showDragHandle: true,
       builder:
           (sheetContext) => Padding(
@@ -1860,7 +2005,8 @@ class _ClientHomeState extends State<ClientHome> {
                                 ),
                         fallback: clientProfile?['name'] ?? 'C',
                         preset:
-                            clientProfile?['avatar_preset'] ?? 'musician_singer_black',
+                            clientProfile?['avatar_preset'] ??
+                            'musician_singer_black',
                         color: clientProfile?['avatar_color'] ?? '#8B5CF6',
                         radius: 50,
                       ),

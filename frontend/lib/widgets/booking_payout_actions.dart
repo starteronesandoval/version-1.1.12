@@ -194,30 +194,30 @@ class _BookingPayoutActionsState extends State<BookingPayoutActions> {
       return const _PayoutNotice(
         icon: Icons.gpp_maybe_outlined,
         text: 'Pago detenido: el equipo revisará el reporte.',
-        color: Color(0xFFFFC857),
+        color: Color(0xFFFFA000),
       );
     }
     if (status != 'musician_funds_held') {
       final notice = switch (status) {
         'pending_connect_account' => (
           'Pago autorizado, pero todavía no transferido: la agrupación debe completar Stripe.',
-          Color(0xFFFFC857),
+          Color(0xFFFFA000),
         ),
         'transfer_failed' => (
           'La transferencia no se completó y está pendiente de revisión.',
-          Color(0xFFFFC857),
+          Color(0xFFFFA000),
         ),
         'approved_for_payout' => (
           'El pago está autorizado y la transferencia está en proceso.',
-          Color(0xFF68DDCD),
+          Color(0xFFFF9D00),
         ),
         'transferred' || 'paid_out' => (
           'El pago fue enviado a la cuenta Stripe de la agrupación.',
-          Color(0xFF68DDCD),
+          Color(0xFFFF9D00),
         ),
         _ => (
           'Estado del pago: ${status ?? 'no disponible'}.',
-          Color(0xFFFFC857),
+          Color(0xFFFFA000),
         ),
       };
       return _PayoutNotice(
@@ -232,10 +232,10 @@ class _BookingPayoutActionsState extends State<BookingPayoutActions> {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFF68DDCD).withValues(alpha: .09),
+        color: const Color(0xFFFF9D00).withValues(alpha: .09),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: const Color(0xFF68DDCD).withValues(alpha: .28),
+          color: const Color(0xFFFF9D00).withValues(alpha: .28),
         ),
       ),
       child: Column(
