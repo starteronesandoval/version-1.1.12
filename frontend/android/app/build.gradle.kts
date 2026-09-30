@@ -14,8 +14,10 @@ android {
     if (keystorePropertiesFile.exists()) {
         keystoreProperties.load(FileInputStream(keystorePropertiesFile))
     }
+    fun signingValue(name: String): String? =
+        keystoreProperties.getProperty(name) ?: System.getenv("BALAM_$name")
     val hasReleaseSigning = listOf("keyAlias", "keyPassword", "storeFile", "storePassword")
-        .all { !keystoreProperties.getProperty(it).isNullOrBlank() }
+        .all { !signingValue(it).isNullOrBlank() }
 
     namespace = "mx.balam.app"
     compileSdk = 36
@@ -48,10 +50,10 @@ android {
     signingConfigs {
         if (hasReleaseSigning) {
             create("release") {
-                keyAlias = keystoreProperties["keyAlias"] as String
-                keyPassword = keystoreProperties["keyPassword"] as String
-                storeFile = rootProject.file(keystoreProperties["storeFile"] as String)
-                storePassword = keystoreProperties["storePassword"] as String
+                keyAlias = signingValue("keyAlias")
+                keyPassword = signingValue("keyPassword")
+                storeFile = rootProject.file(signingValue("storeFile")!!)
+                storePassword = signingValue("storePassword")
                 storeType = "JKS"
             }
         }

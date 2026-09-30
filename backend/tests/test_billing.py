@@ -607,9 +607,32 @@ def test_connect_onboarding_is_available_before_first_paid_contract():
         )
     assert saved.status_code == 201
     assert create_account.call_args.kwargs["type"] == "standard"
+    assert create_account.call_args.kwargs["capabilities"] == {
+        "card_payments": {"requested": True},
+        "transfers": {"requested": True},
+    }
     assert create_account.call_args.kwargs["idempotency_key"] == (
-        f"balam-musician-{musician_id}-connect-standard-v1"
+        f"balam-musician-{musician_id}-connect-standard-v2"
     )
+    # Stripe's hosted Standard onboarding requests all currently and eventually
+    # required verification details directly from the musician.
+    # The app refreshes this status when the musician returns from Stripe.
+    ready_account = {
+        "id": "acct_early_setup",
+        "details_submitted": True,
+        "payouts_enabled": True,
+        "metadata": {"balam_musician_id": str(musician_id)},
+        "requirements": {"currently_due": []},
+    }
+    with patch("app.main.stripe.Account.retrieve", return_value=ready_account):
+        refreshed = client.post(
+            "/api/musicians/me/payout-destination/refresh",
+            headers=musician_headers,
+            json={},
+        )
+    assert refreshed.status_code == 200
+    assert refreshed.json()["onboarding_status"] == "ready"
+    assert refreshed.json()["stripe_connect_ready"] is True
     # An existing Express destination is resumed, never replaced by Standard.
     existing_account = {
         **created_account.to_dict_recursive(), "type": "express",
@@ -634,7 +657,7 @@ def test_connect_onboarding_is_available_before_first_paid_contract():
         )
     assert unavailable.status_code == 502
     assert unavailable.json()["detail"].startswith(
-        "No fue posible comunicarse con Stripe"
+        "Stripe no pudo iniciar el registro de esta cuenta Standard"
     )
     with patch(
         "app.billing.stripe.Account.retrieve",

@@ -1323,6 +1323,34 @@ def get_payout_destination(
     return payout_out(profile, db)
 
 
+@app.post(
+    "/api/musicians/me/payout-destination/refresh",
+    response_model=PayoutDestinationResponse,
+    response_model_exclude_none=True,
+)
+def refresh_payout_destination(
+    user: User = Depends(require_role(UserRole.musician)),
+    db: Session = Depends(get_db),
+):
+    """Refresh the musician's Standard Connect account after Stripe onboarding."""
+    profile = db.scalar(musician_profiles().where(
+        MusicianProfile.user_id == user.id
+    ))
+    if not profile:
+        raise HTTPException(409, "Crea primero el perfil de la agrupación")
+    destination = profile.payout_destination
+    if not destination or not destination.stripe_connected_account_id:
+        return payout_out(profile, db)
+    stripe_client_ready()
+    try:
+        account = stripe.Account.retrieve(destination.stripe_connected_account_id)
+    except stripe.error.StripeError as exc:
+        raise HTTPException(502, "No fue posible actualizar el estado en Stripe") from exc
+    sync_connect_account(account, db)
+    db.commit()
+    return payout_out(profile, db)
+
+
 @app.put(
     "/api/musicians/me/payout-destination",
     response_model=PayoutDestinationResponse,

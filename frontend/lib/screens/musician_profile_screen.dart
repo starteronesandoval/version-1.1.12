@@ -28,7 +28,8 @@ class MusicianProfileScreen extends StatefulWidget {
   State<MusicianProfileScreen> createState() => _MusicianProfileScreenState();
 }
 
-class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
+class _MusicianProfileScreenState extends State<MusicianProfileScreen>
+    with WidgetsBindingObserver {
   final form = GlobalKey<FormState>();
   final picker = ImagePicker();
   final fields = <String, TextEditingController>{
@@ -72,8 +73,17 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     fields['radio_servicio_sorpresa_km']!.text = '30';
     _initialize();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        payoutDestination?['configured'] == true) {
+      _refreshPayoutDestinationFromStripe();
+    }
   }
 
   Future<void> _initialize() async {
@@ -159,13 +169,31 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
             as Map<String, dynamic>;
   }
 
+  Future<void> _refreshPayoutDestinationFromStripe() async {
+    try {
+      final refreshed = await widget.api.post(
+            '/api/musicians/me/payout-destination/refresh',
+            {},
+          )
+          as Map<String, dynamic>;
+      if (mounted) setState(() => payoutDestination = refreshed);
+    } catch (_) {
+      // The webhook can update this state shortly after Stripe finishes.
+    }
+  }
+
   Future<void> _startStripeOnboarding() async {
     try {
       final response =
           await widget.api.post('/api/billing/connect/onboarding', {})
               as Map<String, dynamic>;
+      final url = response['url']?.toString();
+      final uri = url == null ? null : Uri.tryParse(url);
+      if (uri == null || uri.scheme != 'https' || !uri.host.endsWith('stripe.com')) {
+        throw const FormatException('Stripe no devolvió un enlace seguro.');
+      }
       final opened = await launchUrl(
-        Uri.parse(response['url'] as String),
+        uri,
         mode: LaunchMode.externalApplication,
       );
       if (!opened) throw const FormatException();
@@ -175,12 +203,21 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
           context,
         ).showSnackBar(SnackBar(content: Text(error.message)));
       }
+    } on FormatException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              error.message?.toString() ??
+                  'No se pudo abrir el registro seguro de Stripe.',
+            ),
+          ),
+        );
+      }
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('No se pudo abrir el registro seguro de Stripe.'),
-          ),
+          const SnackBar(content: Text('No se pudo abrir el registro seguro de Stripe.')),
         );
       }
     }
@@ -750,6 +787,7 @@ class _MusicianProfileScreenState extends State<MusicianProfileScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     for (final controller in fields.values) {
       controller.dispose();
     }

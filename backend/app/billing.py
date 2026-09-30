@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -16,8 +17,10 @@ from .database import get_db
 from .models import (BillingCustomer, Booking, MusicianBusyDate, MusicianPayoutDestination,
                      MusicianProfile, StripeWebhookEvent, User, UserRole)
 from .notifications import enqueue
+from .schemas import StripeConnectOnboardingResponse
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
+logger = logging.getLogger(__name__)
 
 
 class CheckoutRequest(BaseModel):
@@ -136,7 +139,11 @@ def sync_connect_account(account, db: Session) -> MusicianPayoutDestination | No
     return destination
 
 
-@router.post("/connect/onboarding", status_code=201)
+@router.post(
+    "/connect/onboarding",
+    status_code=201,
+    response_model=StripeConnectOnboardingResponse,
+)
 def create_connect_onboarding(
     user: User = Depends(current_user), db: Session = Depends(get_db),
 ):
@@ -159,12 +166,20 @@ def create_connect_onboarding(
                 type="standard",
                 country="MX",
                 email=user.email,
-                capabilities={"transfers": {"requested": True}},
+                # Standard accounts with a full Stripe Dashboard must request
+                # card_payments together with transfers. Stripe rejects a
+                # transfers-only request before it can create the account.
+                capabilities={
+                    "card_payments": {"requested": True},
+                    "transfers": {"requested": True},
+                },
                 metadata={
                     "balam_musician_id": str(profile.id),
                     "balam_user_id": str(user.id),
                 },
-                idempotency_key=f"balam-musician-{profile.id}-connect-standard-v1",
+                # v2 intentionally replaces the rejected transfers-only v1
+                # request, while preserving retry safety for this payload.
+                idempotency_key=f"balam-musician-{profile.id}-connect-standard-v2",
             )
             destination.stripe_connected_account_id = account.id
             sync_connect_account(account, db)
@@ -185,15 +200,23 @@ def create_connect_onboarding(
             refresh_url=settings.connect_refresh_url,
             return_url=settings.connect_return_url,
             type="account_onboarding",
-            collect="eventually_due",
+            collection_options={"fields": "eventually_due"},
         )
     except stripe.error.StripeError as exc:
         db.rollback()
+        stripe_message = getattr(exc, "user_message", None) or str(exc)
+        logger.warning(
+            "Stripe Connect onboarding failed for musician %s (%s): %s",
+            profile.id,
+            type(exc).__name__,
+            stripe_message,
+        )
         detail = (
             "Activa Stripe Connect en el Dashboard de Stripe antes de "
             "registrar cuentas bancarias de agrupaciones."
             if "signed up for Connect" in str(exc)
-            else "No fue posible comunicarse con Stripe. Intenta nuevamente en unos momentos."
+            else "Stripe no pudo iniciar el registro de esta cuenta Standard. "
+            "Intenta nuevamente en unos momentos."
         )
         raise HTTPException(
             502,
